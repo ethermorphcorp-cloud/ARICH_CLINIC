@@ -2246,12 +2246,17 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
           '</div>' +
         '</div>' +
       '</div>' +
-      '<div style="padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex:none">' +
-        '<button class="btn" data-action="close-record-panel">ปิด</button>' +
-        '<button class="btn" data-action="print-opd-sheet" data-arg="' + esc(r.id) + '"><span class="ms">description</span> ใบ OPD (A5)</button>' +
-        '<button class="btn" data-action="record-panel-receipt" data-arg="' + esc(r.id) + '"><span class="ms">print</span> ออกใบเสร็จ</button>' +
-        (canEditVisit(r.visitStatus) ? '<button class="btn' + (r.status === 'unpaid' ? '' : ' btn-primary') + '" data-action="record-panel-edit" data-arg="' + esc(r.id) + '">แก้ไข</button>' : '') +
-        (r.status === 'unpaid' && visitStatusKey(r.visitStatus) !== 'waiting_payment' ? '' : '<button class="btn' + (r.status === 'unpaid' ? ' btn-primary' : '') + '" data-action="pay-record" data-arg="' + esc(r.id) + '"><span class="ms">payments</span> ชำระเงิน</button>') +
+      // Two rows so nothing spills out of the 440px panel: the document / edit actions on top, ปิด (left) and ชำระเงิน (right) below.
+      '<div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px;flex:none">' +
+        '<div style="display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px">' +
+          '<button class="btn" data-action="print-opd-sheet" data-arg="' + esc(r.id) + '"><span class="ms">description</span> ใบ OPD (A5)</button>' +
+          '<button class="btn" data-action="record-panel-receipt" data-arg="' + esc(r.id) + '"><span class="ms">print</span> ออกใบเสร็จ</button>' +
+          (canEditVisit(r.visitStatus) ? '<button class="btn' + (r.status === 'unpaid' ? '' : ' btn-primary') + '" data-action="record-panel-edit" data-arg="' + esc(r.id) + '">แก้ไข</button>' : '') +
+        '</div>' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">' +
+          '<button class="btn" data-action="close-record-panel">ปิด</button>' +
+          (r.status === 'unpaid' && visitStatusKey(r.visitStatus) !== 'waiting_payment' ? '' : '<button class="btn' + (r.status === 'unpaid' ? ' btn-primary' : '') + '" data-action="pay-record" data-arg="' + esc(r.id) + '"><span class="ms">payments</span> ชำระเงิน</button>') +
+        '</div>' +
       '</div>';
     return body;
   }
