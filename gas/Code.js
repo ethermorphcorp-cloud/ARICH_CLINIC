@@ -161,7 +161,8 @@ var CONFIG = {
     MED_DEPOSITS: 'MedDeposits',
     MED_WITHDRAWALS: 'MedWithdrawals',
     PROCEDURES: 'Procedures',
-    STOCK_PRICES: 'StockPrices',
+    SALE_GROUPS: 'SaleGroups',
+    PRICE_OVERRIDES: 'PriceOverrides',
     AUDIT_LOG: 'AuditLog'
   },
   HEADERS: {
@@ -271,10 +272,17 @@ var CONFIG = {
     // (blank on supplies). The same ยา kept in both stocks is two rows, and
     // nothing moves between them — every pick names its stock.
     Stock: ['ItemID', 'Name', 'Category', 'Unit', 'Qty', 'CreatedAt', 'UpdatedAt', 'StockType', 'MinQty', 'CostPrice', 'Price1', 'Price3', 'Price5', 'Price10', 'Price20', 'Price50', 'StockLoc'],
-    // StockPrices (ARICH): ราคาขาย overrides of one Stock item for a Sale group
-    // (Scope 'group', ScopeKey = group name) or one Sale agent (Scope 'agent',
-    // ScopeKey = SalesID). A blank tier falls back; see resolveItemPrices_.
-    StockPrices: ['PriceID', 'ItemID', 'Scope', 'ScopeKey', 'Price1', 'Price3', 'Price5', 'Price10', 'Price20', 'Price50', 'UpdatedAt'],
+    // SaleGroups (ARICH): the Sale groups a Sales row can belong to (Status
+    // 'active' | 'inactive'). Sales.GroupID points here by id, never by name.
+    SaleGroups: ['GroupID', 'Name', 'Status', 'CreatedAt', 'UpdatedAt'],
+    // PriceOverrides (ARICH): one row = one ราคาขาย table (x1…x50) of one Stock
+    // item for one Sale group (Scope 'group', TargetID = GroupID) or one Sale
+    // agent (Scope 'agent', TargetID = SalesID); (ItemID, Scope, TargetID) is
+    // unique. ItemName / TargetName are copies for reading the sheet only. A
+    // blank tier = no price at that tier. Rule (see resolveItemPrices_): an
+    // agent's row is used whole, else the group's row whole, else the item's
+    // own Price1…Price50 — tiers are never mixed across levels.
+    PriceOverrides: ['PriceID', 'ItemID', 'ItemName', 'Scope', 'TargetID', 'TargetName', 'Price1', 'Price3', 'Price5', 'Price10', 'Price20', 'Price50', 'Status', 'UpdatedAt', 'UpdatedBy'],
     // StockLog (round 25) — one row per item PER "อัพเดตสต๊อก" batch save; a
     // single save (one Date + one Note) can spawn several StockLog rows,
     // one per item line, sharing that Date/Note (mirrors the
@@ -299,12 +307,16 @@ var CONFIG = {
     // StockApplied/ItemID appended later: lines picked from the stock list
     // carry ItemID and their Qty is added to Stock — only on POs created
     // since then (StockApplied=TRUE), so editing an older PO never re-adds it.
-    Orders: ['PoID', 'Date', 'Supplier', 'TotalAmount', 'CreatedBy', 'CreatedAt', 'StockApplied'],
+    // OrderType (ARICH): 'sales' = ซื้อยาจากเซลล์ (SalesID / SalesName name the เซลล์; the ยา
+    // are added to Stock but the PO is NOT a clinic expense — its cost shows up as ค่าต้นทุนยา
+    // when the ยา is used), 'general' = ซื้ออื่นๆ / เวชภัณฑ์ทั่วไป (added to Stock and counted as
+    // ค่าใช้จ่ายคลินิก). Blank (older POs) reads as 'general'.
+    Orders: ['PoID', 'Date', 'Supplier', 'TotalAmount', 'CreatedBy', 'CreatedAt', 'StockApplied', 'OrderType', 'SalesID', 'SalesName'],
     OrderLines: ['LineID', 'PoID', 'Category', 'ItemName', 'Qty', 'UnitPrice', 'LineTotal', 'ItemID'],
     Doctors: ['DoctorID', 'Name', 'Status', 'MinAmount', 'CreatedAt', 'CommissionPct'],
-    // SaleGroup (ARICH): the name of the sales person's Sale group (a
-    // Categories row of Type 'salegroup'), blank when none.
-    Sales: ['SalesID', 'Name', 'Status', 'CommissionRate', 'MinAmount', 'CreatedAt', 'SaleGroup'],
+    // GroupID (ARICH): the sales person's Sale group (SaleGroups.GroupID),
+    // blank = no group.
+    Sales: ['SalesID', 'Name', 'Status', 'CommissionRate', 'MinAmount', 'CreatedAt', 'GroupID'],
     // Promotions (round 12, item 3) — reference/display table for the
     // "จัดการโปรโมชันหน้าคลินิก" page. NOTE: round 12 deliberately kept this
     // standalone from the treatment record modal / revenue-split engine; round
@@ -333,7 +345,7 @@ var CONFIG = {
   // data can't turn a quantity or price into a date.
   NUMBER_COLUMNS: {
     Stock: ['Qty', 'MinQty', 'CostPrice', 'Price1', 'Price3', 'Price5', 'Price10', 'Price20', 'Price50'],
-    StockPrices: ['Price1', 'Price3', 'Price5', 'Price10', 'Price20', 'Price50'],
+    PriceOverrides: ['Price1', 'Price3', 'Price5', 'Price10', 'Price20', 'Price50'],
     StockLog: ['QtyIn', 'QtyRemaining', 'QtyOut'],
     MedDeposits: ['QtyRemaining', 'QtyDeposited'],
     MedWithdrawals: ['Qty', 'UnitCost', 'Amount', 'UnitPrice', 'SaleAmount'],
@@ -360,7 +372,7 @@ var CONFIG = {
     LINE_CHANNEL_ACCESS_TOKEN: 'LINE_CHANNEL_ACCESS_TOKEN'
   },
   CACHE: {
-    MASTER_DATA_KEY: 'MASTER_DATA_V3', // V3: carries `saleGroups` and each sales person's `group`
+    MASTER_DATA_KEY: 'MASTER_DATA_V4', // V4: `saleGroups` come from the SaleGroups sheet; sales carry `groupId`
     MASTER_DATA_TTL: 21600, // 6h, the max CacheService allows
     SESSION_PREFIX: 'SESSION_',
     SESSION_TTL: 21600,     // 6h
@@ -369,7 +381,7 @@ var CONFIG = {
     // Lightweight full-list caches used to power client-side autocomplete
     // (patient/stock suggest boxes) without a server round-trip per keystroke.
     PATIENTS_LITE_KEY: 'PATIENTS_LITE_V2', // V2: entries carry `hn`
-    STOCK_LITE_KEY: 'STOCK_LITE_V5', // V5: entries also carry `loc` (Stock A/B) and `ovr` (group/agent prices); never cost
+    STOCK_LITE_KEY: 'STOCK_LITE_V6', // V6: `ovr` keys are 'g:<GroupID>' / 'a:<SalesID>'; entries carry `loc`; never cost
     LITE_TTL: 21600,
     // Round 19 item 4: getDashboardData's per-date-range result cache. Keyed
     // by a version tag (DASH_VERSION_KEY, bumped by any write that could
@@ -483,6 +495,8 @@ function getSheet_(name) {
   // setupProject() re-run after every schema change.
   var expected = CONFIG.HEADERS[name];
   if (expected && sh.getLastColumn() < expected.length) ensureSheet_(ss, name, expected);
+  // Sales' last column used to be called SaleGroup (a name); it is GroupID now.
+  if (name === CONFIG.SHEETS.SALES && sh.getRange(1, expected.length).getValue() !== expected[expected.length - 1]) sh.getRange(1, expected.length).setValue(expected[expected.length - 1]);
   _sheetCache_[name] = sh;
   return sh;
 }
@@ -961,8 +975,8 @@ function buildMasterData_() {
 
   return {
     doctors: doctors.map(function (d) { return { id: d.DoctorID, name: d.Name, minAmount: d.MinAmount || 0, commissionPct: d.CommissionPct || 0 }; }),
-    sales: salesRows.map(function (s) { return { id: s.SalesID, name: s.Name, commissionRate: s.CommissionRate || 0, minAmount: s.MinAmount || 0, group: s.SaleGroup || '' }; }),
-    saleGroups: categories.filter(function (c) { return c.Type === 'salegroup'; }).map(function (c) { return { id: c.CategoryID, name: c.Name }; }),
+    sales: salesRows.map(function (s) { return { id: s.SalesID, name: s.Name, commissionRate: s.CommissionRate || 0, minAmount: s.MinAmount || 0, groupId: s.GroupID || '' }; }),
+    saleGroups: getRows_(getSheet_(CONFIG.SHEETS.SALE_GROUPS)).filter(function (g) { return isActiveStatus_(g.Status); }).map(function (g) { return { id: g.GroupID, name: g.Name }; }),
     staff: staff.map(function (s) { return { id: s.StaffID, name: s.Name, username: s.Username, level: s.Level, active: !isFalse_(s.Active) }; }),
     treatmentCategories: treatmentCats.map(function (c) { return { id: c.CategoryID, name: c.Name }; }),
     stockCategories: stockCats.map(function (c) { return { id: c.CategoryID, name: c.Name }; }),
@@ -1015,8 +1029,8 @@ function listAllStockLite(token) {
     var ovrByItem = stockPriceOverridesByItem_();
     var data = rows.map(function (s) {
       var o = { id: s.ItemID, name: s.Name, category: s.Category, unit: s.Unit, qty: Number(s.Qty) || 0, type: stockTypeOf_(s), loc: stockLocOf_(s), prices: STOCK_PRICE_TIERS.map(function (t) { return numOrNull_(s['Price' + t]); }) };
-      // ovr: {'g:<group>': [6 tiers], 'a:<SalesID>': [6 tiers]} — the client resolves agent > group > standard like resolveItemPrices_
-      (ovrByItem[s.ItemID] || []).forEach(function (p) { (o.ovr = o.ovr || {})[(p.scope === 'agent' ? 'a:' : 'g:') + p.key] = p.prices; });
+      // ovr: {'g:<GroupID>': [6 tiers], 'a:<SalesID>': [6 tiers]} — the client picks agent's row, else group's row, else standard (resolveItemPrices_)
+      (ovrByItem[s.ItemID] || []).forEach(function (p) { (o.ovr = o.ovr || {})[(p.scope === 'agent' ? 'a:' : 'g:') + p.targetId] = p.prices; });
       return o;
     });
     try { cache.put(CONFIG.CACHE.STOCK_LITE_KEY, JSON.stringify(data), CONFIG.CACHE.LITE_TTL); } catch (e) { /* too large for cache — still return live data */ }
@@ -1319,7 +1333,7 @@ function listSales(token) {
     requireAuth_(token, 'staff');
     var rows = getRows_(getSheet_(CONFIG.SHEETS.SALES));
     return { ok: true, data: rows.map(function (s) {
-      return { id: s.SalesID, name: s.Name, status: s.Status || 'active', commissionRate: s.CommissionRate || 0, minAmount: s.MinAmount || 0, group: s.SaleGroup || '', row: s._row };
+      return { id: s.SalesID, name: s.Name, status: s.Status || 'active', commissionRate: s.CommissionRate || 0, minAmount: s.MinAmount || 0, groupId: s.GroupID || '', row: s._row };
     }) };
   });
 }
@@ -1330,13 +1344,20 @@ function saveSales(token, sales) {
     requireFields_(sales, { name: 'ชื่อเซลล์' });
     var sheet = getSheet_(CONFIG.SHEETS.SALES);
     var isNew = !sales.id;
+    var groupId = String(sales.groupId || '').trim();
+    if (groupId && !getRows_(getSheet_(CONFIG.SHEETS.SALE_GROUPS)).some(function (g) { return g.GroupID === groupId; })) throw ValidationError_('ไม่พบ Sale group ที่เลือก');
+    var oldGroupId = '';
+    if (!isNew) {
+      var oldRow = getRows_(sheet).filter(function (r) { return r.SalesID === sales.id; })[0];
+      oldGroupId = oldRow ? String(oldRow.GroupID || '') : '';
+    }
     var obj = {
       SalesID: isNew ? ('SL' + nextSeq_('SALES', 3)) : sales.id,
       Name: sales.name, Status: sales.status || 'active',
       CommissionRate: requireNumber_(sales.commissionRate || 0, 'อัตราค่าคอมมิชชั่น', { min: 0 }),
       MinAmount: requireNumber_(sales.minAmount || 0, 'ยอดขั้นต่ำ', { min: 0 }),
       CreatedAt: isNew ? nowStr_() : (sales.createdAt || nowStr_()),
-      SaleGroup: String(sales.group || '').trim()
+      GroupID: groupId
     };
     if (isNew) appendRow_(sheet, CONFIG.HEADERS.Sales, obj);
     else {
@@ -1345,7 +1366,9 @@ function saveSales(token, sales) {
       updateRowByIndex_(sheet, CONFIG.HEADERS.Sales, rowIndex, obj);
     }
     invalidateMasterCache_();
+    invalidateStockLiteCache_();
     writeAudit_(session, isNew ? 'CREATE' : 'UPDATE', 'Sales', obj.SalesID, obj.Name);
+    if (!isNew && oldGroupId !== groupId) writeAudit_(session, 'UPDATE', 'SalesGroup', obj.SalesID, (oldGroupId || '-') + ' → ' + (groupId || '-'));
     return { ok: true, data: obj };
   });
 }
@@ -1357,6 +1380,7 @@ function deleteSales(token, id) {
     var rowIndex = findRowIndexById_(sheet, 'SalesID', id);
     if (rowIndex < 0) throw ValidationError_('ไม่พบข้อมูลเซลล์');
     deleteRowByIndex_(sheet, rowIndex);
+    deletePriceOverridesOf_('agent', id);
     invalidateMasterCache_();
     writeAudit_(session, 'DELETE', 'Sales', id, '');
     return { ok: true };
@@ -1538,7 +1562,7 @@ function saveCategory(token, cat) {
   return safeCall_(function () {
     var session = requireAuth_(token, 'admin');
     requireFields_(cat, { name: 'ชื่อหมวดหมู่', type: 'ประเภท' });
-    if (['treatment', 'stock', 'expense', 'salegroup'].indexOf(cat.type) === -1) throw ValidationError_('ประเภทหมวดหมู่ไม่ถูกต้อง');
+    if (['treatment', 'stock', 'expense'].indexOf(cat.type) === -1) throw ValidationError_('ประเภทหมวดหมู่ไม่ถูกต้อง');
     var sheet = getSheet_(CONFIG.SHEETS.CATEGORIES);
     var isNew = !cat.id;
     var obj = {
@@ -1549,10 +1573,7 @@ function saveCategory(token, cat) {
     else {
       var rowIndex = findRowIndexById_(sheet, 'CategoryID', cat.id);
       if (rowIndex < 0) throw ValidationError_('ไม่พบหมวดหมู่');
-      var before = getRows_(sheet).filter(function (r) { return r._row === rowIndex; })[0];
       updateRowByIndex_(sheet, CONFIG.HEADERS.Categories, rowIndex, obj);
-      // Sales rows and ราคา Sale group rows name their group, so a rename carries over to them.
-      if (before && before.Type === 'salegroup' && obj.Type === 'salegroup' && before.Name !== obj.Name) renameSaleGroup_(before.Name, obj.Name);
     }
     invalidateMasterCache_();
     writeAudit_(session, isNew ? 'CREATE' : 'UPDATE', 'Category', obj.CategoryID, obj.Name);
@@ -1560,17 +1581,68 @@ function saveCategory(token, cat) {
   });
 }
 
-/** Points every Sales row and Sale group price row at a renamed Sale group. */
-function renameSaleGroup_(from, to) {
-  var salesSheet = getSheet_(CONFIG.SHEETS.SALES);
-  getRows_(salesSheet).filter(function (r) { return r.SaleGroup === from; }).forEach(function (r) {
-    updateRowByIndex_(salesSheet, CONFIG.HEADERS.Sales, r._row, Object.assign({}, r, { SaleGroup: to }));
+/* ---------------------------------------------------------------- */
+/* SALE GROUPS — the groups a เซลล์ (Sale agent) belongs to, for ราคาขาย    */
+/* ---------------------------------------------------------------- */
+function listSaleGroups(token) {
+  return safeCall_(function () {
+    requireAuth_(token, 'staff');
+    var members = {};
+    getRows_(getSheet_(CONFIG.SHEETS.SALES)).forEach(function (x) { if (x.GroupID) (members[x.GroupID] = members[x.GroupID] || []).push({ id: x.SalesID, name: x.Name }); });
+    return { ok: true, data: getRows_(getSheet_(CONFIG.SHEETS.SALE_GROUPS)).map(function (g) {
+      return { id: g.GroupID, name: g.Name, status: g.Status || 'active', members: members[g.GroupID] || [], row: g._row };
+    }) };
   });
-  var priceSheet = getSheet_(CONFIG.SHEETS.STOCK_PRICES);
-  getRows_(priceSheet).filter(function (r) { return r.Scope === 'group' && String(r.ScopeKey) === from; }).forEach(function (r) {
-    updateRowByIndex_(priceSheet, CONFIG.HEADERS.StockPrices, r._row, Object.assign({}, r, { ScopeKey: to, UpdatedAt: nowStr_() }));
+}
+
+function saveSaleGroup(token, group) {
+  return safeCall_(function () {
+    var session = requireAuth_(token, 'admin');
+    requireFields_(group, { name: 'ชื่อกลุ่ม' });
+    var name = String(group.name).trim();
+    var sheet = getSheet_(CONFIG.SHEETS.SALE_GROUPS);
+    var rows = getRows_(sheet);
+    if (rows.some(function (g) { return g.GroupID !== group.id && String(g.Name).trim().toLowerCase() === name.toLowerCase(); })) throw ValidationError_('มี Sale group ชื่อนี้แล้ว');
+    var isNew = !group.id;
+    var existing = isNew ? null : rows.filter(function (g) { return g.GroupID === group.id; })[0];
+    if (!isNew && !existing) throw ValidationError_('ไม่พบ Sale group');
+    var status = group.status === 'inactive' ? 'inactive' : 'active';
+    if (!isNew && status === 'inactive' && existing.Status !== 'inactive' && getRows_(getSheet_(CONFIG.SHEETS.SALES)).some(function (x) { return x.GroupID === group.id; }))
+      throw ValidationError_('ยังมีเซลล์อยู่ในกลุ่มนี้ ย้ายเซลล์ออกก่อนจึงจะปิดกลุ่มได้');
+    var obj = {
+      GroupID: isNew ? ('SG' + nextSeq_('SALE_GROUP', 3)) : group.id, Name: name, Status: status,
+      CreatedAt: isNew ? nowStr_() : existing.CreatedAt, UpdatedAt: nowStr_()
+    };
+    if (isNew) appendRow_(sheet, CONFIG.HEADERS.SaleGroups, obj);
+    else {
+      updateRowByIndex_(sheet, CONFIG.HEADERS.SaleGroups, existing._row, obj);
+      if (existing.Name !== name) { // TargetName is a readable copy of the group's name
+        var priceSheet = getSheet_(CONFIG.SHEETS.PRICE_OVERRIDES);
+        getRows_(priceSheet).filter(function (r) { return r.Scope === 'group' && String(r.TargetID) === obj.GroupID; }).forEach(function (r) {
+          updateRowByIndex_(priceSheet, CONFIG.HEADERS.PriceOverrides, r._row, Object.assign({}, r, { TargetName: name }));
+        });
+        invalidateStockLiteCache_();
+      }
+    }
+    invalidateMasterCache_();
+    writeAudit_(session, isNew ? 'CREATE' : 'UPDATE', 'SaleGroup', obj.GroupID, obj.Name);
+    return { ok: true, data: { id: obj.GroupID, name: obj.Name, status: obj.Status } };
   });
-  invalidateStockLiteCache_();
+}
+
+function deleteSaleGroup(token, id) {
+  return safeCall_(function () {
+    var session = requireAuth_(token, 'admin');
+    var sheet = getSheet_(CONFIG.SHEETS.SALE_GROUPS);
+    var row = getRows_(sheet).filter(function (g) { return g.GroupID === id; })[0];
+    if (!row) throw ValidationError_('ไม่พบ Sale group');
+    if (getRows_(getSheet_(CONFIG.SHEETS.SALES)).some(function (x) { return x.GroupID === id; })) throw ValidationError_('ยังมีเซลล์อยู่ในกลุ่มนี้ ย้ายเซลล์ออกก่อนจึงจะลบได้');
+    deleteRowByIndex_(sheet, row._row);
+    deletePriceOverridesOf_('group', id);
+    invalidateMasterCache_();
+    writeAudit_(session, 'DELETE', 'SaleGroup', id, row.Name);
+    return { ok: true };
+  });
 }
 
 function deleteCategory(token, id) {
@@ -1669,7 +1741,13 @@ function saveClinicSettings(token, settings) {
     var session = requireAuth_(token, 'admin');
     var sheet = getSheet_(CONFIG.SHEETS.CLINIC_SETTINGS);
     var rows = getRows_(sheet);
-    Object.keys(settings || {}).forEach(function (key) {
+    settings = settings || {};
+    // ชื่อ Stock A / B (shown instead of "Stock A" / "Stock B" everywhere): short, and not the same name twice.
+    ['stockNameA', 'stockNameB'].forEach(function (k) { if (k in settings) settings[k] = String(settings[k] || '').trim().slice(0, 30); });
+    var nameA = ('stockNameA' in settings ? settings.stockNameA : (rows.filter(function (r) { return r.Key === 'stockNameA'; })[0] || {}).Value) || 'Stock A';
+    var nameB = ('stockNameB' in settings ? settings.stockNameB : (rows.filter(function (r) { return r.Key === 'stockNameB'; })[0] || {}).Value) || 'Stock B';
+    if (String(nameA).toLowerCase() === String(nameB).toLowerCase()) throw ValidationError_('ชื่อ Stock A และ Stock B ต้องไม่ซ้ำกัน');
+    Object.keys(settings).forEach(function (key) {
       var existing = rows.filter(function (r) { return r.Key === key; })[0];
       if (existing) {
         updateRowByIndex_(sheet, CONFIG.HEADERS.ClinicSettings, existing._row, { Key: key, Value: settings[key] });
@@ -1748,7 +1826,7 @@ function listStock(token, opts) {
     var who = null;
     if (filters.priceSalesId || filters.priceGroup) {
       var agentRow = filters.priceSalesId ? getRows_(getSheet_(CONFIG.SHEETS.SALES)).filter(function (x) { return x.SalesID === filters.priceSalesId; })[0] : null;
-      who = { salesId: filters.priceSalesId || '', group: agentRow ? (agentRow.SaleGroup || '') : (filters.priceGroup || '') };
+      who = { salesId: filters.priceSalesId || '', groupId: agentRow ? (agentRow.GroupID || '') : (filters.priceGroup || '') };
     }
     page.items = page.items.map(function (r) {
       var o = mapStockOut_(r, latestByItem[r.ItemID], showCost);
@@ -1758,6 +1836,7 @@ function listStock(token, opts) {
       var res = resolveItemPrices_(r, o.overrides, who);
       o.prices = res.prices;
       o.priceSource = res.source;
+      o.priceRefId = res.refId;
       return o;
     });
     page.summary = summary;
@@ -1801,13 +1880,13 @@ function stockLocOf_(s) {
   return String(s.StockLoc || '').toUpperCase() === 'B' ? 'B' : 'A';
 }
 
-/** {ItemID: [{id, scope, key, prices:[6]}]} from the StockPrices sheet. */
+/** {ItemID: [{id, scope, targetId, targetName, prices:[6]}]} from the PriceOverrides sheet (inactive rows left out). */
 function stockPriceOverridesByItem_() {
   var out = {};
-  getRows_(getSheet_(CONFIG.SHEETS.STOCK_PRICES)).forEach(function (p) {
-    if (!p.ItemID || (p.Scope !== 'group' && p.Scope !== 'agent') || !p.ScopeKey) return;
+  getRows_(getSheet_(CONFIG.SHEETS.PRICE_OVERRIDES)).forEach(function (p) {
+    if (!p.ItemID || (p.Scope !== 'group' && p.Scope !== 'agent') || !p.TargetID || !isActiveStatus_(p.Status)) return;
     (out[p.ItemID] = out[p.ItemID] || []).push({
-      id: p.PriceID, scope: p.Scope, key: String(p.ScopeKey),
+      id: p.PriceID, scope: p.Scope, targetId: String(p.TargetID), targetName: p.TargetName || '',
       prices: STOCK_PRICE_TIERS.map(function (t) { return numOrNull_(p['Price' + t]); })
     });
   });
@@ -1815,40 +1894,56 @@ function stockPriceOverridesByItem_() {
 }
 
 /**
- * ราคาขาย of one Stock row for a sales person / Sale group — agent > group >
- * standard, tier by tier (a tier the agent row leaves blank comes from the
- * group row, then from the item itself). source names the most specific
- * level that set any tier: 'agent' | 'group' | 'standard'.
- * who: {salesId, group} (either may be blank).
+ * ราคาขาย table of one Stock row for a sales person — the agent's own
+ * PriceOverrides row if there is one, else their Sale group's row, else the
+ * item's own Price1…Price50. The chosen row is used WHOLE: tiers are never
+ * mixed across levels, so a blank tier in the agent's row stays blank.
+ * who: {salesId, groupId} (either may be blank).
+ * Returns {prices:[6], source:'agent'|'group'|'standard', refId}.
  */
 function resolveItemPrices_(s, overrides, who) {
   who = who || {};
-  var std = STOCK_PRICE_TIERS.map(function (t) { return numOrNull_(s['Price' + t]); });
-  var find = function (scope, key) { return key ? (overrides || []).filter(function (p) { return p.scope === scope && p.key === String(key); })[0] : null; };
-  var agent = find('agent', who.salesId), group = find('group', who.group);
-  var source = 'standard';
-  var prices = std.map(function (v, i) {
-    if (agent && agent.prices[i] != null) { source = 'agent'; return agent.prices[i]; }
-    if (group && group.prices[i] != null) { if (source !== 'agent') source = 'group'; return group.prices[i]; }
-    return v;
-  });
-  return { prices: prices, source: source };
+  var find = function (scope, id) { return id ? (overrides || []).filter(function (p) { return p.scope === scope && p.targetId === String(id); })[0] : null; };
+  var agent = find('agent', who.salesId), group = agent ? null : find('group', who.groupId);
+  var row = agent || group;
+  if (row) return { prices: row.prices.slice(), source: agent ? 'agent' : 'group', refId: row.id };
+  return { prices: STOCK_PRICE_TIERS.map(function (t) { return numOrNull_(s['Price' + t]); }), source: 'standard', refId: s.ItemID };
 }
 
-/** Unit ราคาขาย for `qty` units: the largest priced tier not above qty (else the smallest priced tier); null when no tier is priced. */
-function unitPriceForQty_(prices, qty) {
+/**
+ * The tier a purchase of `qty` units falls in, within one price table: the
+ * largest tier not above qty that has a price (blank tiers skipped), else the
+ * smallest priced tier. null when no tier is priced.
+ * Returns {price, tier} (tier = 1, 3, 5, 10, 20 or 50).
+ */
+function pickTier_(prices, qty) {
   var best = null, first = null;
   STOCK_PRICE_TIERS.forEach(function (t, i) {
     if (prices[i] == null) return;
-    if (first == null) first = prices[i];
-    if (t <= (Number(qty) || 0)) best = prices[i];
+    if (first == null) first = { price: prices[i], tier: t };
+    if (t <= (Number(qty) || 0)) best = { price: prices[i], tier: t };
   });
-  return best != null ? best : first;
+  return best || first;
 }
 
-/** The Sales row's {salesId, group} for resolveItemPrices_. */
+/** Unit ราคาขาย for `qty` units (see pickTier_); null when no tier is priced. */
+function unitPriceForQty_(prices, qty) {
+  var p = pickTier_(prices, qty);
+  return p ? p.price : null;
+}
+
+/** The Sales row's {salesId, groupId} for resolveItemPrices_. */
 function salesWho_(salesRow) {
-  return salesRow ? { salesId: salesRow.SalesID, group: salesRow.SaleGroup || '' } : {};
+  return salesRow ? { salesId: salesRow.SalesID, groupId: salesRow.GroupID || '' } : {};
+}
+
+/** Drops every PriceOverrides row of one group / agent (it was deleted). */
+function deletePriceOverridesOf_(scope, targetId) {
+  var sheet = getSheet_(CONFIG.SHEETS.PRICE_OVERRIDES);
+  getRows_(sheet).filter(function (r) { return r.Scope === scope && String(r.TargetID) === String(targetId); })
+    .sort(function (a, b) { return b._row - a._row; })
+    .forEach(function (r) { deleteRowByIndex_(sheet, r._row); });
+  invalidateStockLiteCache_();
 }
 
 /** Blank cell -> null (so the client can show "-"), anything else -> Number. */
@@ -1950,7 +2045,16 @@ function saveStockItem(token, item) {
       } else {
         updateRowByIndex_(sheet, CONFIG.HEADERS.Stock, existing._row, obj);
       }
-      if (Array.isArray(item.priceOverrides)) saveStockPriceOverrides_(obj.ItemID, item.priceOverrides);
+      if (Array.isArray(item.priceOverrides)) saveStockPriceOverrides_(session, obj, item.priceOverrides);
+      else if (item.priceTarget && item.priceTarget.scope && item.priceTarget.targetId) {
+        // The form edited the table of one Sale group / Sale agent (the one picked on the list): change just that row;
+        // blank in every tier removes it (saveStockPriceOverrides_ drops rows with no price).
+        var pt = item.priceTarget, ptId = String(pt.targetId);
+        var rest = (stockPriceOverridesByItem_()[obj.ItemID] || []).filter(function (o) { return !(o.scope === pt.scope && o.targetId === ptId); })
+          .map(function (o) { return { scope: o.scope, targetId: o.targetId, prices: o.prices.map(function (v) { return v == null ? '' : v; }) }; });
+        rest.push({ scope: pt.scope, targetId: ptId, prices: pt.prices });
+        saveStockPriceOverrides_(session, obj, rest);
+      }
       writeAudit_(session, isNew ? 'CREATE' : 'UPDATE', 'Stock', obj.ItemID, obj.Name);
       invalidateStockLiteCache_();
       return { ok: true, data: mapStockOut_(Object.assign({ _row: 0 }, obj), null, isAdmin) };
@@ -1961,29 +2065,45 @@ function saveStockItem(token, item) {
 }
 
 /**
- * Replaces one item's Sale group / Sale agent price rows. list: [{scope:
- * 'group'|'agent', key, prices:[6]}]; rows with no price at all are dropped,
- * and a scope+key may appear only once. Caller holds the script lock.
+ * Saves one item's Sale group / Sale agent price rows (PriceOverrides).
+ * list: [{scope: 'group'|'agent', targetId, prices:[6]}] — the item's whole set
+ * of override rows: rows already in the sheet are updated in place (keeping
+ * their PriceID), new ones appended, and ones left out removed. A row with no
+ * price at all is dropped, and a (scope, targetId) pair may appear only once.
+ * Caller holds the script lock.
  */
-function saveStockPriceOverrides_(itemId, list) {
+function saveStockPriceOverrides_(session, item, list) {
+  var groups = {}, agents = {};
+  getRows_(getSheet_(CONFIG.SHEETS.SALE_GROUPS)).forEach(function (g) { groups[g.GroupID] = g.Name; });
+  getRows_(getSheet_(CONFIG.SHEETS.SALES)).forEach(function (x) { agents[x.SalesID] = x.Name; });
   var seen = {};
-  var clean = list.filter(function (p) { return p && (p.scope === 'group' || p.scope === 'agent') && String(p.key || '').trim(); }).map(function (p, i) {
+  var clean = list.filter(function (p) { return p && (p.scope === 'group' || p.scope === 'agent') && String(p.targetId || '').trim(); }).map(function (p, i) {
     var label = (p.scope === 'agent' ? 'Sale agent' : 'Sale group') + ' บรรทัดที่ ' + (i + 1);
-    var k = p.scope + ':' + String(p.key).trim();
+    var id = String(p.targetId).trim(), k = p.scope + ':' + id;
+    var known = p.scope === 'agent' ? agents : groups;
+    if (!(id in known)) throw ValidationError_('ไม่พบ' + (p.scope === 'agent' ? 'เซลล์' : ' Sale group') + 'ที่เลือก (' + label + ')');
     if (seen[k]) throw ValidationError_('ราคาซ้ำ: ' + label);
     seen[k] = true;
     var prices = STOCK_PRICE_TIERS.map(function (t, j) { return optionalNumber_((p.prices || [])[j], 'ราคาขาย ' + t + ' ชิ้น (' + label + ')'); });
-    return { scope: p.scope, key: String(p.key).trim(), prices: prices };
+    return { scope: p.scope, targetId: id, targetName: known[id], prices: prices };
   }).filter(function (p) { return p.prices.some(function (v) { return v !== ''; }); });
-  var sheet = getSheet_(CONFIG.SHEETS.STOCK_PRICES);
-  getRows_(sheet).filter(function (r) { return r.ItemID === itemId; })
-    .sort(function (a, b) { return b._row - a._row; })
-    .forEach(function (r) { deleteRowByIndex_(sheet, r._row); });
-  clean.forEach(function (p) {
-    var obj = { PriceID: 'PX' + nextSeq_('STOCK_PRICE', 5), ItemID: itemId, Scope: p.scope, ScopeKey: p.key, UpdatedAt: nowStr_() };
+  var sheet = getSheet_(CONFIG.SHEETS.PRICE_OVERRIDES), H = CONFIG.HEADERS.PriceOverrides;
+  var mine = getRows_(sheet).filter(function (r) { return r.ItemID === item.ItemID; });
+  var byKey = {};
+  mine.forEach(function (r) { byKey[r.Scope + ':' + r.TargetID] = r; });
+  var write = function (p, row) {
+    var obj = { PriceID: row ? row.PriceID : 'PX' + nextSeq_('PRICE_OVERRIDE', 5), ItemID: item.ItemID, ItemName: item.Name, Scope: p.scope, TargetID: p.targetId, TargetName: p.targetName, Status: 'active', UpdatedAt: nowStr_(), UpdatedBy: session.username };
     STOCK_PRICE_TIERS.forEach(function (t, j) { obj['Price' + t] = p.prices[j]; });
-    appendRow_(sheet, CONFIG.HEADERS.StockPrices, obj);
-  });
+    if (row) updateRowByIndex_(sheet, H, row._row, obj); else appendRow_(sheet, H, obj);
+  };
+  var keep = {};
+  clean.forEach(function (p) { keep[p.scope + ':' + p.targetId] = true; });
+  // remove the rows that were taken out first (bottom up), then update the kept ones and append the new
+  mine.filter(function (r) { return !keep[r.Scope + ':' + r.TargetID]; }).sort(function (a, b) { return b._row - a._row; }).forEach(function (r) { deleteRowByIndex_(sheet, r._row); });
+  var remaining = getRows_(sheet).filter(function (r) { return r.ItemID === item.ItemID; }), rem = {};
+  remaining.forEach(function (r) { rem[r.Scope + ':' + r.TargetID] = r; });
+  clean.forEach(function (p) { write(p, rem[p.scope + ':' + p.targetId] || null); });
+  invalidateStockLiteCache_();
 }
 
 /**
@@ -2894,18 +3014,20 @@ function medicineLines_(record, ctx) {
       return;
     }
     var unitPrice = requireNumber_(it.unitPrice || 0, 'ราคาต่อหน่วย' + line, { min: 0 });
+    var oldLine = (ctx.oldLines || []).filter(function (l) { return l.itemId === it.itemId && l.priceSource; })[0];
     // ยาอื่นๆ (not a stock item): name + qty + price only — no stock, no ยาฝาก.
     if (it.other) {
       var otherName = String(it.name || '').trim();
       if (!otherName) throw ValidationError_('กรุณาระบุชื่อยา' + line);
       var oq = requireNumber_(it.qtyDispensed || 0, 'จำนวนซื้อ' + line, { min: 0 });
-      var oo = { other: true, itemId: '', name: otherName, qtyDispensed: oq, qtyUsed: oq, qtyDeposit: 0, expiry: '', unitCost: 0, unitPrice: unitPrice, amount: round2_(oq * unitPrice) };
+      var oo = { other: true, itemId: '', name: otherName, qtyDispensed: oq, qtyUsed: oq, qtyDeposit: 0, expiry: '', unitCost: 0, unitPrice: unitPrice, amount: round2_(oq * unitPrice), priceSource: 'manual', priceRefId: '', tier: null };
       out.items.push(oo);
       out.total += oo.amount;
       return;
     }
     if (!it.itemId || !ctx.stockById[it.itemId] || stockTypeOf_(ctx.stockById[it.itemId]) !== 'medicine') throw ValidationError_('กรุณาเลือกยาจากรายการสต๊อกยา' + line);
     var stockRow = ctx.stockById[it.itemId];
+    if (it.loc && String(it.loc).toUpperCase() !== stockLocOf_(stockRow)) throw ValidationError_('ยาที่เลือกไม่อยู่ใน Stock ' + it.loc + line);
     var old = (ctx.oldLines || []).filter(function (l) { return l.itemId === it.itemId && l.unitCost != null; })[0];
     var o = {
       itemId: it.itemId, name: String(stockRow.Name || it.name || '').trim(), loc: stockLocOf_(stockRow),
@@ -2915,6 +3037,18 @@ function medicineLines_(record, ctx) {
     depositSplit_(o, it, line);
     o.unitPrice = unitPrice;
     o.amount = round2_(o.qtyDispensed * unitPrice);
+    // Where the price came from, kept on the line so later price changes do not
+    // rewrite history: the เซลล์'s own table (agent / group / standard) when the
+    // price is what that table gives for this quantity, else 'manual'.
+    var table = resolveItemPrices_(stockRow, ((ctx.overridesByItem || {})[it.itemId]) || [], salesWho_(ctx.sales));
+    var pick = pickTier_(table.prices, o.qtyDispensed);
+    if (oldLine && Number(oldLine.unitPrice) === unitPrice) { // unchanged from what was saved: keep how it was priced
+      o.priceSource = oldLine.priceSource; o.priceRefId = oldLine.priceRefId || ''; o.tier = oldLine.tier == null ? null : oldLine.tier;
+    } else if (pick && pick.price === unitPrice) {
+      o.priceSource = table.source; o.priceRefId = table.refId; o.tier = pick.tier;
+    } else {
+      o.priceSource = 'manual'; o.priceRefId = ''; o.tier = null;
+    }
     out.items.push(o);
     out.total += o.amount;
     out.cost += o.qtyDispensed * o.unitCost;
@@ -2942,6 +3076,7 @@ function withdrawLines_(record, ctx) {
     if (seen[it.withdrawId]) throw ValidationError_('รายการเบิกยา ' + wd.ItemName + ' ซ้ำ' + line);
     seen[it.withdrawId] = true;
     var o = { withdrawId: wd.WithdrawID, itemId: wd.ItemID, name: wd.ItemName, qtyDispensed: Number(wd.Qty) || 0 };
+    o.note = String(it.note || '').trim().slice(0, 200); // หมายเหตุ of this ยาเบิก line
     return depositSplit_(o, it, line);
   });
 }
@@ -3169,12 +3304,12 @@ function listPatientDeposits(token, patientId) {
 function listDeposits(token) {
   return safeCall_(function () {
     requireAuth_(token, 'staff');
-    var hnById = {}, unitById = {};
+    var hnById = {}, unitById = {}, locById = {};
     getRows_(getSheet_(CONFIG.SHEETS.PATIENTS)).forEach(function (p) { hnById[p.ID] = p.HN || ''; });
-    getRows_(getSheet_(CONFIG.SHEETS.STOCK)).forEach(function (s) { unitById[s.ItemID] = s.Unit || ''; });
+    getRows_(getSheet_(CONFIG.SHEETS.STOCK)).forEach(function (s) { unitById[s.ItemID] = s.Unit || ''; locById[s.ItemID] = stockLocOf_(s) || 'A'; });
     var rows = getRows_(getSheet_(CONFIG.SHEETS.MED_DEPOSITS)).filter(function (r) { return (Number(r.QtyRemaining) || 0) > 0; });
     var out = rows.map(function (r) {
-      return Object.assign(mapDepositOut_(r), { patientId: r.PatientID, patientName: r.PatientName, hn: hnById[r.PatientID] || '', unit: unitById[r.ItemID] || '' });
+      return Object.assign(mapDepositOut_(r), { patientId: r.PatientID, patientName: r.PatientName, hn: hnById[r.PatientID] || '', unit: unitById[r.ItemID] || '', loc: locById[r.ItemID] || 'A' });
     });
     out.sort(function (a, b) { return (a.expiry || '9999').localeCompare(b.expiry || '9999') || a.patientName.localeCompare(b.patientName, 'th'); });
     return { ok: true, data: out };
@@ -3380,7 +3515,7 @@ function saveRecord(token, record) {
       var wdRows = getRows_(wdSheet), wdById = {}, stockById = {};
       wdRows.forEach(function (w) { wdById[w.WithdrawID] = w; });
       getRows_(getSheet_(CONFIG.SHEETS.STOCK)).forEach(function (s) { stockById[s.ItemID] = s; });
-      var medicineGroup = medicineLines_(record, { stockById: stockById, oldLines: isNew ? [] : parseLineItems_(existing.MedicineJSON) });
+      var medicineGroup = medicineLines_(record, { stockById: stockById, sales: sales, overridesByItem: stockPriceOverridesByItem_(), oldLines: isNew ? [] : parseLineItems_(existing.MedicineJSON) });
       messengerItems.forEach(function (m, i) {
         var st = stockById[m.itemId];
         if (!st || stockTypeOf_(st) !== 'medicine') throw ValidationError_('กรุณาเลือกยาจากรายการสต๊อกยา (พัสดุ บรรทัดที่ ' + (i + 1) + ')');
@@ -3614,12 +3749,13 @@ function buildOpdSheetData_(rid) {
   var gender = { male: 'ชาย', female: 'หญิง', other: 'อื่นๆ' }[String(patient.Gender || '').toLowerCase()] || (patient.Gender || '');
   var stockById = {};
   getRows_(getSheet_(CONFIG.SHEETS.STOCK)).forEach(function (s) { stockById[s.ItemID] = s; });
-  var withLoc = function (l) { var loc = l.loc || (stockById[l.itemId] ? stockLocOf_(stockById[l.itemId]) : ''); return l.name + (loc ? ' [Stock ' + loc + ']' : ''); };
+  var stockNameOf = function (loc) { return loc === 'B' ? (receipt.clinic.stockNameB || 'Stock B') : (receipt.clinic.stockNameA || 'Stock A'); };
+  var withLoc = function (l) { var loc = l.loc || (stockById[l.itemId] ? stockLocOf_(stockById[l.itemId]) : ''); return l.name + (loc ? ' [' + stockNameOf(loc) + ']' : ''); };
   var medicines = [];
   if (isTrue_(r.UseOwnMed)) parseLineItems_(r.OwnMedJSON).forEach(function (l) { medicines.push({ kind: 'ถือยาเข้า', name: l.name, qty: l.qty, amount: null }); });
   if (isTrue_(r.UseDepositUse)) parseLineItems_(r.DepositUseJSON).forEach(function (l) { medicines.push({ kind: 'ยาฝาก', name: withLoc(l), qty: l.qty, amount: null }); });
   parseLineItems_(r.WithdrawJSON).forEach(function (l) {
-    medicines.push({ kind: 'ยาเบิก', name: withLoc(l), qty: l.qtyDispensed, amount: null, note: 'ใช้ ' + (l.qtyUsed || 0) + (Number(l.qtyDeposit) > 0 ? ' · ฝาก ' + l.qtyDeposit + (l.expiry ? ' (หมดอายุ ' + l.expiry + ')' : '') : '') });
+    medicines.push({ kind: 'ยาเบิก', name: withLoc(l), qty: l.qtyDispensed, amount: null, note: 'ใช้ ' + (l.qtyUsed || 0) + (Number(l.qtyDeposit) > 0 ? ' · ฝาก ' + l.qtyDeposit + (l.expiry ? ' (หมดอายุ ' + l.expiry + ')' : '') : '') + (l.note ? ' · หมายเหตุ: ' + l.note : '') });
   });
   if (isTrue_(r.UseMedicine)) parseLineItems_(r.MedicineJSON).forEach(function (l) {
     if (!('qtyDispensed' in l)) { medicines.push({ kind: 'ซื้อยาเพิ่ม', name: l.name || 'ยา', qty: '', amount: Number(l.amount) || 0 }); return; }
@@ -4306,6 +4442,7 @@ function deleteExpense(token, id) {
 function mapOrderOut_(o, lines) {
   return {
     id: o.PoID, date: dateStr_(o.Date), supplier: o.Supplier, totalAmount: Number(o.TotalAmount) || 0,
+    type: orderTypeOf_(o), salesId: o.SalesID || '', salesName: o.SalesName || '',
     createdBy: o.CreatedBy, row: o._row,
     lines: (lines || []).map(function (l) {
       return { id: l.LineID, category: l.Category, itemName: l.ItemName, qty: Number(l.Qty) || 0, unitPrice: Number(l.UnitPrice) || 0, lineTotal: Number(l.LineTotal) || 0, itemId: l.ItemID || '' };
@@ -4320,6 +4457,9 @@ function mapOrderOut_(o, lines) {
  * no longer in Stock are skipped so a deleted stock item never blocks
  * editing/deleting the PO.
  */
+/** 'sales' (ซื้อยาจากเซลล์) or 'general' (ซื้ออื่นๆ / เวชภัณฑ์ทั่วไป; also every older PO). */
+function orderTypeOf_(o) { return o.OrderType === 'sales' ? 'sales' : 'general'; }
+
 function orderEffects_(orderRow, lines, stockIds) {
   var eff = {};
   if (!orderRow || !isTrue_(orderRow.StockApplied)) return eff;
@@ -4341,6 +4481,7 @@ function listOrders(token, opts) {
     opts = opts || {};
     var filters = compactFilters_(opts.filters);
     var rows = getRows_(getSheet_(CONFIG.SHEETS.ORDERS));
+    if (filters.type) rows = rows.filter(function (r) { return orderTypeOf_(r) === filters.type; });
     // A purchase order (PO) is a header row with its actual items on separate
     // OrderLines rows (multi-line, possibly spanning several categories) — so
     // "search by item name" / "filter by category" both have to look at the
@@ -4357,7 +4498,7 @@ function listOrders(token, opts) {
       var itemPoIds = {};
       lineRows.forEach(function (l) { if (String(l.ItemName).toLowerCase().indexOf(q) > -1) itemPoIds[l.PoID] = true; });
       // Matches either the supplier name OR any line item's name within that PO.
-      rows = rows.filter(function (r) { return String(r.Supplier).toLowerCase().indexOf(q) > -1 || !!itemPoIds[r.PoID]; });
+      rows = rows.filter(function (r) { return String(r.Supplier).toLowerCase().indexOf(q) > -1 || String(r.SalesName || '').toLowerCase().indexOf(q) > -1 || !!itemPoIds[r.PoID]; });
     }
     if (filters.dateFrom) rows = rows.filter(function (r) { return dateStr_(r.Date) >= filters.dateFrom; });
     if (filters.dateTo) rows = rows.filter(function (r) { return dateStr_(r.Date) <= filters.dateTo; });
@@ -4381,14 +4522,32 @@ function getOrder(token, id) {
   });
 }
 
-/** order: {id?, date, supplier, lines:[{category,itemName,qty,unitPrice,itemId?}]} — TotalAmount computed server-side; lines with an itemId add their qty to Stock (see orderEffects_). */
+/**
+ * order: {id?, type: 'general'|'sales', salesId (sales only), date, supplier, lines:[{category,itemName,qty,unitPrice,itemId?}]}
+ * — TotalAmount computed server-side; lines with an itemId add their qty to Stock (see orderEffects_).
+ * A 'sales' PO (ซื้อยาจากเซลล์) names the เซลล์ (the supplier is that เซลล์) and every line must be a ยา picked
+ * from stock; it is not a clinic expense (see getDashboardData).
+ */
 function saveOrder(token, order) {
   return safeCall_(function () {
     var session = requireAuth_(token, 'staff');
+    var type = order.type === 'sales' ? 'sales' : 'general';
+    var salesRow = null;
+    if (type === 'sales') {
+      requireFields_(order, { salesId: 'ชื่อเซลล์' });
+      salesRow = getRows_(getSheet_(CONFIG.SHEETS.SALES)).filter(function (x) { return x.SalesID === order.salesId; })[0];
+      if (!salesRow) throw ValidationError_('ไม่พบเซลล์ที่เลือก');
+      order.supplier = salesRow.Name;
+    }
     requireFields_(order, { date: 'วันที่', supplier: 'ผู้จำหน่าย' });
     requireDateStr_(order.date, 'วันที่');
     var lines = Array.isArray(order.lines) ? order.lines : [];
     if (!lines.length) throw ValidationError_('กรุณาเพิ่มรายการสินค้าอย่างน้อย 1 รายการ');
+    if (type === 'sales') {
+      var medIds = {};
+      getRows_(getSheet_(CONFIG.SHEETS.STOCK)).forEach(function (s) { if (stockTypeOf_(s) === 'medicine') medIds[s.ItemID] = true; });
+      lines.forEach(function (l, i) { if (!l.itemId || !medIds[l.itemId]) throw ValidationError_('ใบสั่งซื้อยาจากเซลล์ต้องเลือกยาจากสต๊อกยา (บรรทัดที่ ' + (i + 1) + ')'); });
+    }
     lines.forEach(function (l, i) {
       requireFields_(l, { category: 'หมวดหมู่ (บรรทัดที่ ' + (i + 1) + ')', itemName: 'ชื่อสินค้า (บรรทัดที่ ' + (i + 1) + ')' });
       requireNumber_(l.qty, 'จำนวน (บรรทัดที่ ' + (i + 1) + ')', { min: 0.0001 });
@@ -4407,6 +4566,7 @@ function saveOrder(token, order) {
       var poId = isNew ? ('PO' + nextSeq_('ORDER', 5)) : order.id;
       var obj = {
         PoID: poId, Date: order.date, Supplier: order.supplier, TotalAmount: totalAmount,
+        OrderType: type, SalesID: salesRow ? salesRow.SalesID : '', SalesName: salesRow ? salesRow.Name : '',
         CreatedBy: isNew ? session.username : (order.createdBy || session.username),
         CreatedAt: isNew ? nowStr_() : (order.createdAt || nowStr_()),
         StockApplied: isNew ? 'TRUE' : (existingOrder.StockApplied || '')
@@ -4523,33 +4683,35 @@ function getDashboardData(token, opts) {
 
     var allExpenses = getRows_(getSheet_(CONFIG.SHEETS.EXPENSES));
     var periodExpenses = allExpenses.filter(function (r) { var d = dateStr_(r.Date); return d >= dateFrom && d <= dateTo; });
-    var allOrders = getRows_(getSheet_(CONFIG.SHEETS.ORDERS));
+    // ใบสั่งซื้อ: only ซื้ออื่นๆ / เวชภัณฑ์ทั่วไป are ค่าใช้จ่ายคลินิก; ซื้อยาจากเซลล์ goes to Stock only (its cost is ค่าต้นทุนยา).
+    var allOrders = getRows_(getSheet_(CONFIG.SHEETS.ORDERS)).filter(function (o) { return orderTypeOf_(o) !== 'sales'; });
     var periodOrders = allOrders.filter(function (r) { var d = dateStr_(r.Date); return d >= dateFrom && d <= dateTo; });
 
     // True total money collected per record (recordCollected_) ties out
     // exactly with clinic + sales + doctor shares (recordClinicShare_).
     var recordTotalCollected_ = recordCollected_;
 
-    // รายได้ = collected from customers (หัตถการ / โปร / Canula / อื่นๆ, paid
-    // records) + collected from the sales people (รายงานรายเซลล์).
-    // รายจ่าย = ค่าใช้จ่าย + จัดซื้อ + ส่วนแบ่งแพทย์ + ส่วนแบ่งเซลล์.
-    // ยาเบิก (จัดยา-เบิกยา): the clinic collects ราคาทุน from the เซลล์. ซื้อยาเพิ่ม
-    // lines are in the medicine rows too, but the clinic charges those to the
-    // customer (already in customerRevenue), so they are not รายได้จากเซลล์.
+    // รายได้คลินิก = what customers pay at the clinic for หัตถการ / โปร / Canula / อื่นๆ
+    //   (paid records, without ซื้อยาเพิ่ม).
+    // รายได้ยา = ราคาขาย of every ยา line (ยาเบิก + ซื้อยาเพิ่ม); ค่าต้นทุนยา = their ราคาทุน
+    //   (both from รายงานรายเซลล์'s rows, so รายได้ยา − ต้นทุนยา = ส่วนต่างสุทธิ there).
+    // รายได้รวม = รายได้คลินิก + รายได้ยา.
+    // ค่าใช้จ่ายคลินิก = ค่าใช้จ่าย + จัดซื้อ; ค่าใช้จ่ายรวม = ค่าใช้จ่ายคลินิก + ค่าต้นทุนยา + ค่าคอมหมอ + ค่าคอมเซลล์.
+    // กำไรสุทธิ = รายได้รวม − ค่าใช้จ่ายรวม.
     var medRows = salesReportRows_(function () { return true; });
-    var salesRows = medRows.filter(function (o) { return !o.clinicCharged; });
     var periodMedRows = medRows.filter(function (o) { return o.date >= dateFrom && o.date <= dateTo; });
-    var periodSalesRows = salesRows.filter(function (o) { return o.date >= dateFrom && o.date <= dateTo; });
     var customerRevenue = periodRecords.reduce(function (s, r) { return s + recordTotalCollected_(r); }, 0);
-    var salesIncome = periodSalesRows.reduce(function (s, o) { return s + o.costAmount; }, 0);
-    // กำไรค่ายา = ราคาขาย − ทุน of every ยา line in the period (รายงานรายเซลล์'s ส่วนต่างสุทธิ).
-    var medMargin = periodMedRows.reduce(function (s, o) { return s + o.margin; }, 0);
-    var totalRevenue = round2_(customerRevenue + salesIncome);
+    var medicinePurchased = periodRecords.reduce(function (s, r) { return s + (Number(r.MedicineAmount) || 0); }, 0);
+    var clinicRevenue = round2_(customerRevenue - medicinePurchased);
+    var medRevenue = round2_(periodMedRows.reduce(function (s, o) { return s + o.saleAmount; }, 0));
+    var medCost = round2_(periodMedRows.reduce(function (s, o) { return s + o.costAmount; }, 0));
+    var totalRevenue = round2_(clinicRevenue + medRevenue);
     var expenseFromExpenses = periodExpenses.reduce(function (s, r) { return s + (Number(r.Amount) || 0); }, 0);
     var expenseFromOrders = periodOrders.reduce(function (s, r) { return s + (Number(r.TotalAmount) || 0); }, 0);
     var totalDoctorShare = periodRecords.reduce(function (s, r) { return s + (Number(r.DoctorShare) || 0); }, 0);
     var salesShareTotal = periodRecords.reduce(function (s, r) { return s + (Number(r.SalesShare) || 0); }, 0);
-    var totalExpense = round2_(expenseFromExpenses + expenseFromOrders + totalDoctorShare + salesShareTotal);
+    var clinicExpense = round2_(expenseFromExpenses + expenseFromOrders);
+    var totalExpense = round2_(clinicExpense + medCost + totalDoctorShare + salesShareTotal);
     var profit = round2_(totalRevenue - totalExpense);
     var profitPct = totalRevenue > 0 ? (profit / totalRevenue) * 100 : 0;
 
@@ -4567,8 +4729,11 @@ function getDashboardData(token, opts) {
     }
     var monthlyRevenue = {}, monthlyExpense = {};
     months.forEach(function (m) { monthlyRevenue[m] = 0; monthlyExpense[m] = 0; });
-    paidRecords.forEach(function (r) { var m = monthKey_(dateStr_(r.Date)); if (monthlyRevenue[m] !== undefined) monthlyRevenue[m] += recordTotalCollected_(r); });
-    salesRows.forEach(function (o) { var m = monthKey_(o.date); if (monthlyRevenue[m] !== undefined) monthlyRevenue[m] += o.costAmount; });
+    paidRecords.forEach(function (r) { var m = monthKey_(dateStr_(r.Date)); if (monthlyRevenue[m] !== undefined) monthlyRevenue[m] += recordTotalCollected_(r) - (Number(r.MedicineAmount) || 0); });
+    medRows.forEach(function (o) {
+      var m = monthKey_(o.date);
+      if (monthlyRevenue[m] !== undefined) { monthlyRevenue[m] += o.saleAmount; monthlyExpense[m] += o.costAmount; }
+    });
     paidRecords.forEach(function (r) { var m = monthKey_(dateStr_(r.Date)); if (monthlyExpense[m] !== undefined) monthlyExpense[m] += (Number(r.DoctorShare) || 0) + (Number(r.SalesShare) || 0); });
     allExpenses.forEach(function (r) { var m = monthKey_(dateStr_(r.Date)); if (monthlyExpense[m] !== undefined) monthlyExpense[m] += Number(r.Amount) || 0; });
     allOrders.forEach(function (r) { var m = monthKey_(dateStr_(r.Date)); if (monthlyExpense[m] !== undefined) monthlyExpense[m] += Number(r.TotalAmount) || 0; });
@@ -4587,14 +4752,12 @@ function getDashboardData(token, opts) {
     var procRevenue = periodRecords.reduce(function (s, r) { return s + (Number(r.Amount) || 0); }, 0);
     var promoRevenue = periodRecords.reduce(function (s, r) { return s + (Number(r.PromoAmount) || 0); }, 0);
     var canulaRevenue = periodRecords.reduce(function (s, r) { return s + (isTrue_(r.UseCanula) ? (Number(r.CanulaAmount) || 0) : 0); }, 0);
-    var medicineRevenue = periodRecords.reduce(function (s, r) { return s + (Number(r.MedicineAmount) || 0); }, 0);
     var byRevenueType = {
       'ค่าหัตถการ': procRevenue,
       'โปรโมชัน': promoRevenue,
       'Canula': canulaRevenue,
-      'ซื้อยาเพิ่ม': round2_(medicineRevenue),
-      'รายการอื่นๆ': round2_(customerRevenue - procRevenue - promoRevenue - canulaRevenue - medicineRevenue),
-      'รายได้จากเซลล์ (ยาเบิก ราคาทุน)': round2_(salesIncome)
+      'รายการอื่นๆ': round2_(clinicRevenue - procRevenue - promoRevenue - canulaRevenue),
+      'ยา (ราคาขาย)': medRevenue
     };
     Object.keys(byRevenueType).forEach(function (k) { if (!(byRevenueType[k] > 0)) delete byRevenueType[k]; });
 
@@ -4610,6 +4773,7 @@ function getDashboardData(token, opts) {
     var byExpenseCat = {};
     periodExpenses.forEach(function (r) { byExpenseCat[r.Category] = (byExpenseCat[r.Category] || 0) + (Number(r.Amount) || 0); });
     if (expenseFromOrders > 0) byExpenseCat['จัดซื้อ'] = (byExpenseCat['จัดซื้อ'] || 0) + expenseFromOrders;
+    if (medCost > 0) byExpenseCat['ต้นทุนยา'] = (byExpenseCat['ต้นทุนยา'] || 0) + medCost;
     if (totalDoctorShare > 0) byExpenseCat['ส่วนแบ่งแพทย์'] = (byExpenseCat['ส่วนแบ่งแพทย์'] || 0) + totalDoctorShare;
     if (salesShareTotal > 0) byExpenseCat['ส่วนแบ่งเซลล์'] = (byExpenseCat['ส่วนแบ่งเซลล์'] || 0) + salesShareTotal;
 
@@ -4664,10 +4828,10 @@ function getDashboardData(token, opts) {
       stats: {
         totalRevenue: totalRevenue, totalExpense: totalExpense, profit: profit, profitPct: profitPct,
         customerCount: customerCount,
-        customerRevenue: round2_(customerRevenue), salesIncome: round2_(salesIncome), // the two parts of totalRevenue
+        customerRevenue: round2_(customerRevenue), // what customers paid (incl. ซื้อยาเพิ่ม)
         doctorShare: round2_(totalDoctorShare), salesShare: round2_(salesShareTotal),  // expenses, with ค่าใช้จ่าย + จัดซื้อ
-        clinicExpense: round2_(expenseFromExpenses + expenseFromOrders),              // ค่าใช้จ่ายคลินิก = ค่าใช้จ่าย + จัดซื้อ
-        medMargin: round2_(medMargin)                                                  // กำไรค่ายาเซลล์ (ราคาขาย − ทุน)
+        clinicRevenue: clinicRevenue, medRevenue: medRevenue,                          // รายได้รวม = รายได้คลินิก + รายได้ยา
+        clinicExpense: clinicExpense, medCost: medCost                                 // ค่าใช้จ่ายรวม = คลินิก + ต้นทุนยา + ค่าคอมหมอ + ค่าคอมเซลล์
       },
       clinicDaily: clinicDaily,
       medicineDaily: medicineDaily,

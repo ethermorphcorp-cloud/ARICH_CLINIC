@@ -230,9 +230,19 @@ button,input,textarea,select{font-family:inherit}
   .nav-item,.preview-item{justify-content:center}
   .user-card{justify-content:center}
 }
+.sale-row{display:flex;align-items:center;gap:16px;padding:12px 16px;flex-wrap:wrap}
+.sg-split{display:grid;grid-template-columns:minmax(230px,300px) minmax(0,1fr);gap:18px;align-items:start}
+.dash-cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:20px}
+.dash-card{padding:14px 15px;border:1px solid var(--border);border-radius:var(--r);display:flex;gap:11px;align-items:center;min-width:0}
+.dash-card .ic{width:40px;height:40px;border-radius:12px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;flex:none}
+.dash-card .lb{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dash-card .vl{font-size:19px;font-weight:700;white-space:nowrap}
+.dash-card .sb{font-size:11.5px;font-weight:600;color:var(--muted);margin-top:1px}
 @media (max-width:1100px){
   .chart-3{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .dash-cards{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
+@media (max-width:760px){ .sg-split{grid-template-columns:1fr} .dash-cards{grid-template-columns:repeat(2,minmax(0,1fr))} }
 @media (max-width:720px){
   .board-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
   .board-cols{grid-template-columns:1fr}
@@ -536,12 +546,12 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     // `panel` is the open history side panel: {item, log} (log null while loading).
     // `procedures` is the รายการหัตถการ tab's full list (filtered/paged client-side).
     stock: { type: 'supply', loc: 'A', priceGroup: '', priceSalesId: '', list: null, page: 1, q: '', category: '', searchSuggest: [], reloading: false, panel: null, procedures: null, procQ: '', procPage: 1 },
-    deposits: { list: null, q: '', filter: '', page: 1, panel: null },
+    deposits: { list: null, loc: 'A', q: '', filter: '', page: 1, panel: null },
     // Round 19 item 2: `reloading`/`orderReloading` drive a dim-in-place
     // transition on the table (instead of a hard content-swap with zero
     // feedback in between) while a dropdown-filter-triggered reload is in
     // flight — see the dd-* action handlers and the loadX() functions below.
-    expense: { tab: 'expense', list: null, page: 1, q: '', category: '', orders: null, orderPanel: null, orderPage: 1, orderQ: '', orderCategory: '', searchSuggest: [], orderSearchSuggest: [], reloading: false, orderReloading: false },
+    expense: { tab: 'expense', list: null, page: 1, q: '', category: '', orders: null, orderPanel: null, orderPage: 1, orderQ: '', orderCategory: '', orderType: '', searchSuggest: [], orderSearchSuggest: [], reloading: false, orderReloading: false },
     promotions: { list: null, q: '' },
     board: { data: null, date: '', updatedAt: null, loading: false },
     notify: { known: null, unseen: 0, timer: null },
@@ -867,6 +877,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     state.records.visitStatus = isAdmin() ? '' : 'with_doctor';
     call('getMasterData', session.token, gsOpts({ quiet: true })).then(function (res) {
       if (res.ok) state.master = res.data;
+      relabelStockCache();
       render();
       pollQueueAlerts();
       if (state.screen === 'dash') loadDash();
@@ -897,12 +908,21 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     var p = state.suggestCache.patients.filter(function (x) { return x.id === patientId; })[0];
     return (p && p.nickname) ? ' <span style="color:var(--muted);font-weight:400">(' + esc(p.nickname) + ')</span>' : '';
   }
+  /** Name of ยา Stock A / B as set in ตั้งค่าคลีนิค > ข้อมูลบริษัท (default "Stock A" / "Stock B"). */
+  function stockName(loc) {
+    var ci = (state.master && state.master.clinicInfo) || {};
+    return (loc === 'B' ? ci.stockNameB : ci.stockNameA) || ('Stock ' + (loc === 'B' ? 'B' : 'A'));
+  }
+  /** "name [stock name]" — what pickers show and match for a ยา, since the same name can sit in both stocks. */
+  function stockLabelText(s) { return s.loc ? s.name + ' [' + stockName(s.loc) + ']' : s.name; }
+  /** Re-words the cached picker labels after the stock names (or the master data) changed. */
+  function relabelStockCache() { (state.suggestCache.stock || []).forEach(function (x) { x.label = stockLabelText(x); }); }
   function refreshStockSuggestCache() {
     return call('listAllStockLite', session.token, gsOpts({ quiet: true })).then(function (res) {
       if (!res.ok) return;
       // ยา of Stock A and Stock B may share a name, so pickers show and match "name [Stock X]".
-      res.data.forEach(function (s) { s.label = s.loc ? s.name + ' [Stock ' + s.loc + ']' : s.name; });
       state.suggestCache.stock = res.data;
+      relabelStockCache();
     });
   }
 
@@ -1038,22 +1058,24 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
    * handler, so the line's existing linking (itemId, unit, ราคาขาย tier,
    * captions) runs unchanged; the input stays free text for names not in stock.
    */
-  function medPickOptions(type, q) {
-    var items = stockItemsOfType(type), ql = String(q || '').trim().toLowerCase();
-    var exact = items.some(function (s) { return (s.label || s.name).toLowerCase() === ql; });
-    return items.filter(function (s) { return !ql || exact || ((s.label || s.name) + ' ' + (s.category || '')).toLowerCase().indexOf(ql) > -1; }).map(function (s) {
+  function medPickOptions(type, q, loc) {
+    // loc = the line's own Stock A/B dropdown: only that stock's items, shown by plain name.
+    var lab = function (s) { return loc ? s.name : (s.label || s.name); };
+    var items = stockItemsOfType(type, loc), ql = String(q || '').trim().toLowerCase();
+    var exact = items.some(function (s) { return lab(s).toLowerCase() === ql; });
+    return items.filter(function (s) { return !ql || exact || (lab(s) + ' ' + (s.category || '')).toLowerCase().indexOf(ql) > -1; }).map(function (s) {
       var left = Number(s.qty) || 0;
-      return { value: s.id, label: s.label || s.name, sub: left > 0 ? 'คงเหลือ ' + left + (s.unit ? ' ' + s.unit : '') : 'หมด', subWarn: left <= 0 };
+      return { value: s.id, label: lab(s), sub: left > 0 ? 'คงเหลือ ' + left + (s.unit ? ' ' + s.unit : '') : 'หมด', subWarn: left <= 0 };
     });
   }
   function openMedPicker(el) {
     if (!el || !el.id) return;
-    var type = el.getAttribute('data-med-pick');
-    openPortal(el.id, medPickOptions(type, el.value), function (id) {
-      var item = stockItemsOfType(type).filter(function (s) { return s.id === id; })[0];
+    var type = el.getAttribute('data-med-pick'), loc = el.getAttribute('data-med-loc') || '';
+    openPortal(el.id, medPickOptions(type, el.value, loc), function (id) {
+      var item = stockItemsOfType(type, loc).filter(function (s) { return s.id === id; })[0];
       var input = document.getElementById(el.id);
       if (!item || !input) return;
-      input.value = item.label || item.name;
+      input.value = loc ? item.name : (item.label || item.name);
       input.dispatchEvent(new Event('input', { bubbles: true })); // untrusted: the handler links the line, no re-open
     }, null);
   }
@@ -1399,22 +1421,28 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     // รายได้รวมคลินิก = จากลูกค้า (รวมซื้อยาเพิ่ม) + จากเซลล์ (ยาเบิก ราคาทุน) ·
     // ค่าใช้จ่ายคลินิก = ค่าใช้จ่าย + จัดซื้อ · กำไรสุทธิ = รายได้ − ค่าใช้จ่าย − ค่าคอมเซลล์ − ค่าหมอ ·
     // กำไรค่ายาเซลล์ = ราคาขาย − ทุน of the period's ยา (shown apart, not in กำไรสุทธิ).
-    var sub = function (t) { return '<div style="font-size:13px;font-weight:600;color:var(--muted);margin-top:2px">' + t + '</div>'; };
-    var cards = '' +
-      statCard('groups', 'จำนวนคนไข้', num(s.customerCount) + ' ราย') +
-      statCard('payments', 'รายได้รวมคลินิก', money(s.totalRevenue)) +
-      statCard('receipt_long', 'ค่าใช้จ่ายคลินิก', money(s.clinicExpense) + sub('ค่าใช้จ่าย + จัดซื้อ')) +
-      statCard('medication', 'กำไรค่ายาเซลล์', money(s.medMargin) + sub('ราคาขาย − ทุน')) +
-      statCard('badge', 'ค่าคอมมิชชันเซลล์', money(s.salesShare)) +
-      statCard('stethoscope', 'ค่าหมอ', money(s.doctorShare)) +
-      statCard('trending_up', 'กำไรสุทธิ', money(s.profit) + sub('%กำไร ' + pctLabel(s.profitPct)));
+    var dc = function (icon, label, value, sub) {
+      return '<div class="dash-card"><div class="ic"><span class="ms" style="font-size:22px">' + icon + '</span></div>' +
+        '<div style="min-width:0"><div class="lb" title="' + esc(label) + '">' + esc(label) + '</div><div class="vl">' + value + '</div>' + (sub ? '<div class="sb">' + sub + '</div>' : '') + '</div></div>';
+    };
+    // Row 1 = รายได้ (รวม = คลินิก + ยา), กำไรสุทธิ, จำนวนคนไข้ · Row 2 = ค่าใช้จ่าย (รวม = คลินิก + ต้นทุนยา + ค่าคอมหมอ + ค่าคอมเซลล์)
+    var cards = dc('payments', 'รายได้รวม', money(s.totalRevenue)) +
+      dc('local_hospital', 'รายได้คลินิก', money(s.clinicRevenue)) +
+      dc('medication', 'รายได้ยา', money(s.medRevenue)) +
+      dc('trending_up', 'กำไรสุทธิ', money(s.profit), '%กำไร ' + pctLabel(s.profitPct)) +
+      dc('groups', 'จำนวนคนไข้', num(s.customerCount) + ' ราย') +
+      dc('receipt_long', 'ค่าใช้จ่ายรวม', money(s.totalExpense)) +
+      dc('request_quote', 'ค่าใช้จ่ายคลินิก', money(s.clinicExpense)) +
+      dc('inventory_2', 'ค่าต้นทุนยา', money(s.medCost)) +
+      dc('stethoscope', 'ค่าคอมหมอ', money(s.doctorShare)) +
+      dc('badge', 'ค่าคอมเซลล์', money(s.salesShare));
     return '' +
       '<div style="display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap">' +
         '<input type="date" id="dashFrom" value="' + esc(state.dash.from) + '" style="' + inputStyle + ';width:auto" data-action-change="dash-range">' +
         '<span style="color:var(--muted)">ถึง</span>' +
         '<input type="date" id="dashTo" value="' + esc(state.dash.to) + '" style="' + inputStyle + ';width:auto" data-action-change="dash-range">' +
       '</div>' +
-      '<div class="grid-fit" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:20px">' + cards + '</div>' +
+      '<div class="dash-cards">' + cards + '</div>' +
       // Charts: รายเดือน (only months that have data) / รายได้ + รายจ่ายรายหมวดหมู่ / สัดส่วนส่วนแบ่งแพทย์ + ส่วนแบ่งเซลล์ + รายได้รายโปรโมชัน
       '<div style="display:flex;flex-direction:column;gap:14px">' +
         monthlyTrendChart((d.monthlyTrend || []).filter(function (m) { return (Number(m.revenue) || 0) || (Number(m.expense) || 0); })) +
@@ -1422,8 +1450,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
           barChart('รายได้รายหมวดหมู่', d.revenueByType.map(function (r) { return { label: r.label, v: r.value }; })) +
           barChart('รายจ่ายรายหมวดหมู่', d.expenseByCategory.map(function (r) { return { label: r.label, v: r.value }; })) +
         '</div>' +
-        dailyComboChart('รายได้คลินิก VS ค่าใช้จ่ายคลินิก (รายวัน · ส่วนหัตถการ)', d.clinicDaily || [],
-          [{ key: 'revenue', label: 'รายได้คลินิก', color: 'var(--green)' }, { key: 'expense', label: 'ค่าใช้จ่ายคลินิก', color: 'var(--pink)' }],
+        dailyComboChart('รายได้คลินิก VS ค่าใช้จ่ายคลินิก (รายวัน)', d.clinicDaily || [],
+          [{ key: 'revenue', label: 'รายได้คลินิก (หัตถการ + โปร + Canula + อื่นๆ)', color: 'var(--green)' }, { key: 'expense', label: 'ค่าใช้จ่ายคลินิก (รวมค่าคอม)', color: 'var(--pink)' }],
           { key: 'profit', label: 'กำไร', color: 'var(--navy,#7A4650)' }) +
         dailyComboChart('รายได้ยา VS ต้นทุนยา VS กำไรสุทธิ (รายวัน)', d.medicineDaily || [],
           [{ key: 'revenue', label: 'รายได้ยา (ราคาขาย)', color: 'var(--gold-dark)' }, { key: 'cost', label: 'ต้นทุนยา', color: 'var(--muted-3)' }],
@@ -1988,7 +2016,12 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       d._origSalesId = d.salesId; // same sales person keeps the saved salesCommissionPct (see previewShares)
       if (d.stockApplied && d.useDepositUse) d.depositUseItems.forEach(function (l) { d._oldDepositUse[l.itemId] = (d._oldDepositUse[l.itemId] || 0) + (Number(l.qty) || 0); });
       // Saved ซื้อยาเพิ่ม prices stay as they were (a sales change does not re-price them); pickers show "name [Stock X]".
-      (d.medicineItems || []).forEach(function (l) { l._priceTyped = true; var it = l.itemId && medicineStockItem(l.itemId); if (it) l.name = it.label || l.name; });
+      (d.medicineItems || []).forEach(function (l) {
+        l._priceTyped = true;
+        var it = l.itemId && medicineStockItem(l.itemId);
+        if (it) { l.name = it.name; l.loc = it.loc || 'A'; } // each line shows its own Stock dropdown and the plain name
+        else if (!l.other && !l.loc) l.loc = 'A';
+      });
       (d.messengerItems || []).forEach(function (l) { var it = l.itemId && medicineStockItem(l.itemId); if (it) l.name = it.label || l.name; });
       d.beforePhotoIds = d.beforePhotoIds || []; d.afterPhotoIds = d.afterPhotoIds || [];
       loadRecordPhotoUrls(d.beforePhotoIds.concat(d.afterPhotoIds));
@@ -2137,14 +2170,14 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     };
     var medicineHtml = chipGroup('medical_services', 'รายการหัตถการ', r.procedureItems, function (p) { return esc(p.name) + (p.detail ? ' (' + esc(p.detail) + ')' : '') + ' · ' + money(p.amount); }) +
       chipGroup('medication', 'รายการยาเบิก (ไม่คิดเงิน)', r.withdrawItems, function (m) {
-        return esc(m.name) + ' ×' + esc(m.qtyDispensed) + ' (ใช้ ' + esc(m.qtyUsed) + ' · ฝาก ' + esc(m.qtyDeposit) + (m.expiry ? ' หมดอายุ ' + esc(m.expiry) : '') + ')';
+        return esc(m.name) + ' ×' + esc(m.qtyDispensed) + ' (ใช้ ' + esc(m.qtyUsed) + ' · ฝาก ' + esc(m.qtyDeposit) + (m.expiry ? ' หมดอายุ ' + esc(m.expiry) : '') + ')' + (m.note ? ' · หมายเหตุ: ' + esc(m.note) : '');
       }) +
       chipGroup('medication', 'รายการซื้อยาเพิ่ม', r.medicineItems, function (m) {
-        return esc(m.name) + (m.loc ? ' [Stock ' + esc(m.loc) + ']' : '') + ('qtyDispensed' in m ? ' ×' + esc(m.qtyDispensed) + ' (ใช้ ' + esc(m.qtyUsed) + ' · ฝาก ' + esc(m.qtyDeposit) + (m.expiry ? ' หมดอายุ ' + esc(m.expiry) : '') + ')' : '') + (Number(m.amount) > 0 ? ' · ' + money(m.amount) : '');
+        return esc(m.name) + (m.loc ? ' [' + esc(stockName(m.loc)) + ']' : '') + ('qtyDispensed' in m ? ' ×' + esc(m.qtyDispensed) + ' (ใช้ ' + esc(m.qtyUsed) + ' · ฝาก ' + esc(m.qtyDeposit) + (m.expiry ? ' หมดอายุ ' + esc(m.expiry) : '') + ')' : '') + (Number(m.amount) > 0 ? ' · ' + money(m.amount) : '');
       }) +
       chipGroup('medication', 'รายการถือยาเข้า', r.ownMedItems, function (m) { return esc(m.name) + ' ×' + esc(m.qty); }) +
       chipGroup('medication', 'รายการยาฝาก', r.depositUseItems, function (m) { return esc(m.name) + ' ×' + esc(m.qty); }) +
-      chipGroup('local_shipping', 'รายการพัสดุ', r.messengerItems, function (m) { return esc(m.name) + (m.loc ? ' [Stock ' + esc(m.loc) + ']' : '') + ' ×' + esc(m.qty) + (m.note ? ' · ' + esc(m.note) : ''); });
+      chipGroup('local_shipping', 'รายการพัสดุ', r.messengerItems, function (m) { return esc(m.name) + (m.loc ? ' [' + esc(stockName(m.loc)) + ']' : '') + ' ×' + esc(m.qty) + (m.note ? ' · ' + esc(m.note) : ''); });
     var panelThumbs = function (tag) {
       var ids = r[tag + 'PhotoIds'] || [], urls = state.records.photoUrls || {};
       if (!ids.length) return '';
@@ -2577,12 +2610,9 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   function salesPriceFor(item, salesId, qty) {
     if (!item) return null;
     var sales = (state.master.sales || []).filter(function (x) { return x.id === salesId; })[0];
-    var ovr = item.ovr || {}, agent = sales ? ovr['a:' + sales.id] : null, group = sales && sales.group ? ovr['g:' + sales.group] : null;
-    var prices = (item.prices || []).map(function (v, i) {
-      if (agent && agent[i] != null) return agent[i];
-      if (group && group[i] != null) return group[i];
-      return v;
-    });
+    // Agent's own table, else the group's, else the item's standard — used whole, never mixed per tier (resolveItemPrices_ in Code.js).
+    var ovr = item.ovr || {};
+    var prices = (sales && (ovr['a:' + sales.id] || (sales.groupId && ovr['g:' + sales.groupId]))) || item.prices || [];
     var best = null, first = null;
     STOCK_PRICE_TIERS.forEach(function (t, i) {
       if (prices[i] == null) return;
@@ -2735,7 +2765,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   }
 
   /* ---- Record modal: ยา zone helpers ---- */
-  var DISPENSE_COLS = 'minmax(170px,1fr) 74px 74px 132px 96px 92px 40px';
+  var DISPENSE_COLS = 'minmax(260px,1fr) 74px 74px 132px 96px 92px 40px';
   function medicineStockItem(itemId) { return stockItemsOfType('medicine').filter(function (x) { return x.id === itemId; })[0]; }
   /** The parts of dispense row `i` that change while typing, keyed by element-id prefix (see patchDispenseRow). */
   function dispenseDynamicHtml(line, i) {
@@ -2901,7 +2931,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     depositUseItems: function () { return { itemId: '', name: '', qty: 1 }; },
     messengerItems: function () { return { itemId: '', name: '', qty: 1, note: '' }; }
   };
-  function newDispenseLine(other) { return { itemId: '', name: '', qtyDispensed: 1, qtyUsed: 1, qtyDeposit: 0, unitPrice: '', amount: 0, other: !!other }; }
+  function newDispenseLine(other) { return { itemId: '', name: '', loc: other ? '' : 'A', qtyDispensed: 1, qtyUsed: 1, qtyDeposit: 0, unitPrice: '', amount: 0, other: !!other }; }
   function recordModalBody() {
     var d = state.draft;
     var docOpts = [{ value: '', label: '— แพทย์ —' }].concat((state.master.doctors || []).map(function (x) { return { value: x.id, label: x.name }; }));
@@ -3032,7 +3062,9 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
           var dyn = dispenseDynamicHtml(m, i);
           var nameInput = m.other
             ? '<input type="text" placeholder="ชื่อยาอื่นๆ" value="' + esc(m.name) + '" data-bind="' + p + 'name" style="' + inputStyle + '">'
-            : '<input type="text" id="medPick' + i + '" data-med-pick="medicine" autocomplete="off" placeholder="เลือกยาจากสต๊อก" value="' + esc(m.name) + '" data-bind="' + p + 'name" style="' + inputStyle + '">';
+            : '<div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:6px">' +
+                bindSelect(p + 'loc', [{ value: 'A', label: stockName('A') }, { value: 'B', label: stockName('B') }]) +
+                '<input type="text" id="medPick' + i + '" data-med-pick="medicine" data-med-loc="' + esc(m.loc || 'A') + '" autocomplete="off" placeholder="เลือกยาจาก ' + esc(stockName(m.loc || 'A')) + '" value="' + esc(m.name) + '" data-bind="' + p + 'name" style="' + inputStyle + '"></div>';
           return dispRow([
             dispCell(nameInput + dispCap('dispNameCap' + i, dyn.dispNameCap)),
             dispCell(numInput(p + 'qtyDispensed', m.qtyDispensed) + dispCap('dispQdCap' + i, dyn.dispQdCap)),
@@ -3059,7 +3091,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         d.withdrawItems.map(function (w, i) {
           var s = medicineStockItem(w.itemId), unit = s && s.unit ? s.unit : '';
           return '<div style="display:grid;grid-template-columns:' + WD_COLS + ';gap:8px;align-items:start;padding:10px 12px;border-top:1px solid var(--border)">' +
-            dispCell('<div style="font-size:13px;font-weight:600;padding-top:9px">' + esc(w.name) + '</div>' + dispCap('wdNameCap' + i, 'ใบเบิก' + (w._wdDate ? ' ' + esc(w._wdDate) : '') + (w._wdSales ? ' · ' + esc(w._wdSales) : ''))) +
+            dispCell('<div style="font-size:13px;font-weight:600;padding-top:9px">' + esc(w.name) + '</div>' + dispCap('wdNameCap' + i, 'ใบเบิก' + (w._wdDate ? ' ' + esc(w._wdDate) : '') + (w._wdSales ? ' · ' + esc(w._wdSales) : '')) +
+              '<input type="text" maxlength="200" placeholder="หมายเหตุ" value="' + esc(w.note || '') + '" data-bind="withdrawItems.' + i + '.note" style="' + inputStyle + ';padding:6px 9px;font-size:12px;margin-top:6px">') +
             dispCell('<div style="font-size:13px;font-weight:600;padding-top:9px">' + esc(w.qtyDispensed) + '</div>' + dispCap('wdQdCap' + i, esc(unit))) +
             dispCell(numInput('withdrawItems.' + i + '.qtyUsed', w.qtyUsed) + dispCap('wdQuCap' + i, esc(unit))) +
             dispCell('<div id="wdDep' + i + '" style="padding-top:8px">' + withdrawDepHtml(w, i) + '</div>', 'center') +
@@ -3225,9 +3258,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
    */
   function recordFooter(d) {
     var st = visitStatusKey(d.visitStatus);
-    var receipt = !d.id ? '<span></span>' : '<div style="display:flex;gap:8px">' +
-      '<button class="btn" data-action="print-opd-sheet" data-arg="' + esc(d.id) + '"><span class="ms">description</span> ใบ OPD (A5)</button>' +
-      (st !== 'with_doctor' ? '<button class="btn" data-action="issue-receipt" data-arg="' + esc(d.id) + '"><span class="ms">print</span> พิมพ์ใบเสร็จ</button>' : '') + '</div>';
+    var receipt = d.id && st !== 'with_doctor' ? '<button class="btn" data-action="issue-receipt" data-arg="' + esc(d.id) + '"><span class="ms">print</span> พิมพ์ใบเสร็จ</button>' : '<span></span>';
     return '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:18px;gap:8px;flex-wrap:wrap">' + receipt +
       '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
         '<button class="btn" data-action="close-modal">ยกเลิก</button>' +
@@ -3255,6 +3286,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       afterRecordWrite();
       if (state.stock.list) loadStock();
       if (thenPay && res.data) openPaymentModal(res.data);
+      // "บันทึกการรักษา → รอชำระเงิน" ends with the ใบ OPD (A5) preview, ready to print.
+      if (complete && res.data) printOpdSheetAction(res.data.id);
     });
   }
   /** Refreshes everything a record save/payment can change that is on screen. */
@@ -3440,11 +3473,13 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   var STOCK_TABS = [{ id: 'supply', label: 'รายการเวชภัณฑ์' }, { id: 'medicine', label: 'รายการยา' }];
   // จัดการสินค้า/บริการ tabs: เวชภัณฑ์, ยา of Stock A and of Stock B (each ยา row
   // belongs to one stock), plus รายการหัตถการ (not stock — see proceduresView).
-  var PRODUCT_TABS = [{ id: 'supply', label: 'รายการเวชภัณฑ์' }, { id: 'medicine:A', label: 'รายการยา Stock A' }, { id: 'medicine:B', label: 'รายการยา Stock B' }, { id: 'procedure', label: 'รายการหัตถการ' }];
+  function productTabs() {
+    return [{ id: 'supply', label: 'รายการเวชภัณฑ์' }, { id: 'medicine:A', label: 'รายการยา ' + stockName('A') }, { id: 'medicine:B', label: 'รายการยา ' + stockName('B') }, { id: 'procedure', label: 'รายการหัตถการ' }];
+  }
   var PRICE_SOURCE_LABELS = { standard: 'Standard', group: 'Sale group', agent: 'Sale Agent' };
   function stockTabId() { return state.stock.type === 'medicine' ? 'medicine:' + state.stock.loc : state.stock.type; }
   /** "ยา Stock A" on a ยา tab, else the type's label. */
-  function stockPageLabel() { return state.stock.type === 'medicine' ? 'ยา Stock ' + state.stock.loc : stockTypeLabel(state.stock.type); }
+  function stockPageLabel() { return state.stock.type === 'medicine' ? 'ยา ' + stockName(state.stock.loc) : stockTypeLabel(state.stock.type); }
   // Must match STOCK_PRICE_TIERS in Code.gs — item.prices[i] is the ราคาขาย for STOCK_PRICE_TIERS[i] ชิ้น.
   var STOCK_PRICE_TIERS = [1, 3, 5, 10, 20, 50];
   var STOCK_LOG_KIND_LABELS = { update: 'อัพเดตสต๊อก', in: 'รับเข้า', out: 'เบิกออก', set: 'ปรับยอดคงเหลือ', import: 'นำเข้า CSV', opening: 'ยอดยกมา', record: 'บันทึกการรักษา', withdraw: 'จัดยา-เบิกยา', purchase: 'จัดซื้อ' };
@@ -3470,7 +3505,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
    * per-row "ประวัติ" side panel (see stockPanelTemplate).
    */
   function stockTemplate() {
-    if (state.stock.type === 'procedure') return tabBar(PRODUCT_TABS, 'procedure', 'stock-tab') + proceduresView();
+    if (state.stock.type === 'procedure') return tabBar(productTabs(), 'procedure', 'stock-tab') + proceduresView();
     var catOpts = [{ value: '', label: 'หมวดหมู่ทั้งหมด' }].concat((state.master.stockCategories || []).map(function (c) { return { value: c.name, label: c.name }; }));
     var L = state.stock.list;
     var type = state.stock.type, typeLabel = stockPageLabel();
@@ -3494,7 +3529,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     var sum = (L && L.summary) || null;
     var countText = function (n) { return sum ? esc(n) + ' <span style="font-size:15px;font-weight:500;color:var(--muted)">รายการ</span>' : '<span class="spin"></span>'; };
     return '' +
-      tabBar(PRODUCT_TABS, stockTabId(), 'stock-tab') +
+      tabBar(productTabs(), stockTabId(), 'stock-tab') +
       '<div class="grid-fit" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">' +
         statCard('inventory_2', 'จำนวนรายการ' + typeLabel, countText(sum && sum.total)) +
         statCard('warning', 'ใกล้หมด', countText(sum && sum.low)) +
@@ -3503,11 +3538,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">' +
         searchScopeBoxHtml('stock', '240px') +
         '<button id="ddStockCat" class="btn" data-action="dd-stockcat">' + esc((catOpts.filter(function (o) { return o.value === state.stock.category; })[0] || {}).label || 'หมวดหมู่ทั้งหมด') + ' <span class="ms">expand_more</span></button>' +
-        '<button class="btn" style="margin-left:auto" data-action="stock-csv-template" title="ดาวน์โหลดไฟล์ตัวอย่าง CSV"><span class="ms">download</span> Template CSV</button>' +
-        '<button class="btn" data-action="stock-csv-upload"><span class="ms">upload_file</span> อัปโหลด CSV</button>' +
         '<input type="file" id="stockCsvInput" accept=".csv,text/csv" style="display:none">' +
-        '<button class="btn" data-action="new-stock"><span class="ms">add</span> เพิ่ม' + typeLabel + '</button>' +
-        '<button class="btn btn-primary" data-action="new-stock-update"><span class="ms">inventory</span> อัพเดตสต๊อก' + typeLabel + '</button>' +
+        '<button id="ddStockMenu" class="btn btn-primary" style="margin-left:auto" data-action="dd-stock-menu"><span class="ms">tune</span> จัดการ' + typeLabel + ' <span class="ms">expand_more</span></button>' +
       '</div>' +
       (isMed ? stockPriceViewBar() : '') +
       listCardWrap(
@@ -3533,14 +3565,20 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         ? '<span class="tag-badge" style="background:var(--green-soft);color:var(--green-dark)">' + esc(s.depositQty) + ' ' + esc(s.unit) + '</span>'
         : '<span style="color:var(--muted)">-</span>') + '</td>' : '') +
       '<td style="white-space:nowrap">' + esc(qty) + ' ' + esc(s.unit) + qtyBadge + dateNote + '</td>' +
-      (isMed ? (showCost ? '<td>' + stockMoneyCell(s.costPrice) + '</td>' : '') + (s.prices || []).map(function (p) { return '<td>' + stockMoneyCell(p) + '</td>'; }).join('') +
+      (isMed ? (showCost ? '<td>' + stockMoneyCell(s.costPrice) + '</td>' : '') + (s.prices || []).map(function (p) {
+        // ตัวเลขสีจาง = the ราคา of a lower level (the selected group/agent has no table of its own for this ยา); แดง = ต่ำกว่าทุน
+        var faded = priceViewLevel() !== 'standard' && (s.priceSource || 'standard') !== priceViewLevel();
+        var low = showCost && p != null && s.costPrice != null && p < s.costPrice;
+        return '<td style="' + (low ? 'color:var(--red-dark);font-weight:600' : (faded ? 'color:var(--muted-3)' : '')) + '"' + (low ? ' title="ต่ำกว่าราคาทุน"' : '') + '>' + stockMoneyCell(p) + '</td>';
+      }).join('') +
         '<td>' + priceSourceBadge(s.priceSource) + '</td>' : '') +
       actions + '</tr>';
   }
   /** ราคาขาย as one Sale group / Sale agent sees it: the table resolves agent > group > Standard. */
   function stockPriceViewBar() {
     var agent = (state.master.sales || []).filter(function (x) { return x.id === state.stock.priceSalesId; })[0];
-    var groupLabel = agent ? (agent.group || 'ไม่มีกลุ่ม') + ' (ของ ' + agent.name + ')' : (state.stock.priceGroup || 'ทุก Sale group');
+    var groupName = function (id) { return ((state.master.saleGroups || []).filter(function (g) { return g.id === id; })[0] || {}).name || ''; };
+    var groupLabel = agent ? (groupName(agent.groupId) || 'ไม่มีกลุ่ม') + ' (ของ ' + agent.name + ')' : (groupName(state.stock.priceGroup) || 'ทุก Sale group');
     return '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:-4px 0 14px;font-size:12.5px;color:var(--text-2)">' +
       '<span class="ms" style="font-size:18px;color:var(--muted)">sell</span> ราคาขายสำหรับ' +
       '<button id="ddPriceGroup" class="btn" data-action="dd-price-group"' + (agent ? ' disabled style="opacity:.6"' : '') + '>Sale group: ' + esc(groupLabel) + ' <span class="ms">expand_more</span></button>' +
@@ -3548,11 +3586,14 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       '<span style="color:var(--muted)">ลำดับราคา: Sale Agent → Sale group → Standard</span>' +
     '</div>';
   }
+  function saleGroupName(id) { return ((state.master.saleGroups || []).filter(function (g) { return g.id === id; })[0] || {}).name || ''; }
+  /** The level the price view asks for: 'agent' (a เซลล์ picked), 'group' (a Sale group picked) or 'standard'. */
+  function priceViewLevel() { return state.stock.priceSalesId ? 'agent' : (state.stock.priceGroup ? 'group' : 'standard'); }
   function priceGroupFilterOptions() {
-    return [{ value: '', label: 'ทุก Sale group (Standard)' }].concat((state.master.saleGroups || []).map(function (g) { return { value: g.name, label: g.name }; }));
+    return [{ value: '', label: 'ทุก Sale group (Standard)' }].concat((state.master.saleGroups || []).map(function (g) { return { value: g.id, label: g.name }; }));
   }
   function priceAgentFilterOptions() {
-    return [{ value: '', label: 'ทั้งหมด' }].concat((state.master.sales || []).map(function (x) { return { value: x.id, label: x.name + (x.group ? ' · ' + x.group : '') }; }));
+    return [{ value: '', label: 'ทั้งหมด' }].concat((state.master.sales || []).map(function (x) { return { value: x.id, label: x.name + (saleGroupName(x.groupId) ? ' · ' + saleGroupName(x.groupId) : '') }; }));
   }
   function priceSourceBadge(src) {
     src = src || 'standard';
@@ -3711,19 +3752,33 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
 
   /* ---- เพิ่ม/แก้ไข รายการ ---- */
   function newStockModal() {
-    openModal('stock', { type: state.stock.type, loc: state.stock.loc, name: '', category: (state.master.stockCategories[0] || {}).name || '', unit: '', minQty: '', qty: 0, costPrice: '', prices: STOCK_PRICE_TIERS.map(function () { return ''; }), priceOverrides: [] });
+    openModal('stock', { type: state.stock.type, loc: state.stock.loc, name: '', category: (state.master.stockCategories[0] || {}).name || '', unit: '', minQty: '', qty: 0, costPrice: '', prices: STOCK_PRICE_TIERS.map(function () { return ''; }), priceTarget: null });
   }
   function editStockModal(id) {
     var s = stockItemById(id);
     if (!s) return;
     var blank = function (v) { return v == null ? '' : v; };
-    // prices in the list may be a Sale group/agent view — the form edits the Standard ones.
+    // The list's prices are those of the selected view, so the form edits that level:
+    //  Sale group = ทั้งหมด, Sale agent = ทั้งหมด -> the Standard prices;
+    //  a Sale group picked -> that group's table; a Sale agent picked -> that agent's table.
+    // The other fields (name, หมวดหมู่, ...) are always the item's own.
     var std = s.standardPrices || s.prices || [];
+    var level = s.type === 'medicine' ? priceViewLevel() : 'standard', target = null;
+    if (level !== 'standard') {
+      var targetId = level === 'agent' ? state.stock.priceSalesId : state.stock.priceGroup;
+      var own = (s.overrides || []).filter(function (o) { return o.scope === level && o.targetId === targetId; })[0];
+      var targetName = level === 'agent' ? ((state.master.sales || []).filter(function (x) { return x.id === targetId; })[0] || {}).name : saleGroupName(targetId);
+      target = {
+        scope: level, targetId: targetId, label: (level === 'agent' ? 'เซลล์ ' : 'Sale group ') + (targetName || ''), exists: !!own,
+        from: s.priceSource || 'standard', // where the prices shown now come from, when there is no table of its own yet
+        prices: STOCK_PRICE_TIERS.map(function (t, i) { return blank((own ? own.prices : s.prices || [])[i]); })
+      };
+    }
     openModal('stock', Object.assign({}, s, {
       loc: s.loc || 'A',
       minQty: blank(s.minQty), costPrice: blank(s.costPrice),
       prices: STOCK_PRICE_TIERS.map(function (t, i) { return blank(std[i]); }),
-      priceOverrides: (s.overrides || []).map(function (o) { return { scope: o.scope, key: o.key, prices: STOCK_PRICE_TIERS.map(function (t, i) { return blank(o.prices[i]); }) }; })
+      priceTarget: target
     }));
   }
   function deleteStockConfirm(id) {
@@ -3738,13 +3793,29 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     var typeOpts = STOCK_TABS.map(function (t) { return { value: t.id, label: stockTypeLabel(t.id) }; });
     var typeLabel = stockTypeLabel(d.type);
     var optNum = function (path) { return bindInput(path, 'number', 'min="0" step="any" data-blank-ok'); };
-    var priceFields = d.type !== 'medicine' ? '' :
-      (isAdmin() ? field('ราคาทุน', optNum('costPrice')) : '') +
-      '<div style="margin-bottom:6px"><label style="font-size:12px;color:var(--text-2)">ราคาขาย (Standard)</label></div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0 12px">' +
-        STOCK_PRICE_TIERS.map(function (t, i) { return field('จำนวน ' + t + ' ชิ้น', optNum('prices.' + i)); }).join('') +
-      '</div>' + priceOverrideFields(d);
-    var locOpts = [{ value: 'A', label: 'Stock A' }, { value: 'B', label: 'Stock B' }];
+    var priceGrid = function (base) {
+      return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0 12px">' +
+        STOCK_PRICE_TIERS.map(function (t, i) { return field('จำนวน ' + t + ' ชิ้น', optNum(base + '.' + i)); }).join('') + '</div>';
+    };
+    var tgt = d.priceTarget, priceFields = '';
+    if (d.type === 'medicine' && tgt) {
+      // Editing the table of the Sale group / Sale agent chosen on the list (its prices only; the item's Standard prices stay as they are).
+      priceFields = (isAdmin() && d.costPrice !== '' ? '<div style="font-size:12.5px;color:var(--text-2);margin:2px 0 8px">ราคาทุน <b>' + esc(money(d.costPrice)) + '</b></div>' : '') +
+        '<div style="margin:6px 0 4px;font-weight:700;font-size:13px"><span class="ms" style="font-size:17px;vertical-align:middle;color:var(--accent)">sell</span> ราคาขาย — ' + esc(tgt.label) + '</div>' +
+        '<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">' + (tgt.exists
+          ? 'แก้ตารางราคาเฉพาะของ' + esc(tgt.label) + ' · '
+          : 'ยังไม่มีตารางราคาเฉพาะ ช่องด้านล่างเริ่มจากราคาที่ใช้อยู่ตอนนี้ (' + esc(PRICE_SOURCE_LABELS[tgt.from] || tgt.from) + ') บันทึกแล้วจะเป็นตารางของ' + esc(tgt.label) + ' · ') +
+          'ใช้ทั้งตาราง ช่องว่าง = ไม่มีราคาขั้นนั้น (ไม่ดึงจากระดับอื่น) · ล้างทุกช่องแล้วบันทึก = กลับไปใช้ราคาระดับล่าง</div>' +
+        priceGrid('priceTarget.prices') +
+        '<div id="stockCostWarn" style="font-size:12px;color:var(--red-dark);margin:2px 0 6px">' + belowCostWarning(d) + '</div>' +
+        '<button class="btn" data-action="clear-price-target" style="margin-bottom:4px"><span class="ms">backspace</span> ล้างราคาเฉพาะ</button>';
+    } else if (d.type === 'medicine') {
+      priceFields = (isAdmin() ? field('ราคาทุน', optNum('costPrice')) : '') +
+        '<div style="margin-bottom:6px"><label style="font-size:12px;color:var(--text-2)">ราคาขาย (Standard)</label></div>' + priceGrid('prices') +
+        '<div style="font-size:11.5px;color:var(--muted);margin:2px 0 6px">ราคาของ Sale group / Sale agent แก้ได้โดยเลือกกลุ่มหรือเซลล์ที่ตัวกรองด้านบนก่อน แล้วกดแก้ไข</div>' +
+        '<div id="stockCostWarn" style="font-size:12px;color:var(--red-dark);margin-bottom:6px">' + belowCostWarning(d) + '</div>';
+    }
+    var locOpts = [{ value: 'A', label: stockName('A') }, { value: 'B', label: stockName('B') }];
     return modalHeader(d.id ? 'แก้ไข' + typeLabel : 'เพิ่ม' + typeLabel + 'ใหม่') +
       '<div style="display:grid;grid-template-columns:' + (d.type === 'medicine' ? '1fr 1fr' : '1fr') + ';gap:0 12px">' +
         field('ประเภทสต๊อก', bindSelect('type', typeOpts)) +
@@ -3759,27 +3830,14 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       '</div>' +
       priceFields + saveBtn();
   }
-  /** ราคาขายเฉพาะ Sale group / Sale agent: one row per group or agent; a blank tier uses the next level down. */
-  function priceOverrideFields(d) {
-    var groups = (state.master.saleGroups || []).map(function (g) { return { value: g.name, label: g.name }; });
-    var agents = (state.master.sales || []).map(function (x) { return { value: x.id, label: x.name + (x.group ? ' (' + x.group + ')' : '') }; });
-    var scopeOpts = [{ value: 'group', label: 'Sale group' }, { value: 'agent', label: 'Sale agent' }];
-    var rows = (d.priceOverrides || []).map(function (o, i) {
-      var keyOpts = [{ value: '', label: o.scope === 'agent' ? '— เลือกเซลล์ —' : '— เลือกกลุ่ม —' }].concat(o.scope === 'agent' ? agents : groups);
-      return '<div style="border:1px solid var(--border-soft);border-radius:var(--r-sm);padding:10px 12px;margin-bottom:8px">' +
-        '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">' +
-          '<div style="width:130px">' + bindSelect('priceOverrides.' + i + '.scope', scopeOpts) + '</div>' +
-          '<div style="flex:1">' + bindSelect('priceOverrides.' + i + '.key', keyOpts) + '</div>' +
-          '<button class="btn" data-action="remove-price-ovr" data-arg="' + i + '" title="ลบ"><span class="ms">close</span></button>' +
-        '</div>' +
-        '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px">' +
-          STOCK_PRICE_TIERS.map(function (t, j) {
-            return '<div><div style="font-size:10.5px;color:var(--muted);margin-bottom:2px">' + t + ' ชิ้น</div>' + bindInput('priceOverrides.' + i + '.prices.' + j, 'number', 'min="0" step="any" data-blank-ok placeholder="-"') + '</div>';
-          }).join('') +
-        '</div></div>';
-    }).join('');
-    return '<div style="margin:6px 0 6px;display:flex;align-items:center;gap:8px"><label style="font-size:12px;color:var(--text-2);flex:1">ราคาขายเฉพาะ Sale group / Sale agent <span style="color:var(--muted)">(ช่องว่าง = ใช้ราคาระดับถัดไป)</span></label>' +
-      '<button class="btn" data-action="add-price-ovr" style="padding:6px 10px"><span class="ms">add</span> เพิ่มราคา</button></div>' + rows;
+  /** Red note listing every ราคาขาย being edited that is below the item's ราคาทุน (admin only: staff never see the cost). */
+  function belowCostWarning(d) {
+    var cost = Number(d.costPrice);
+    if (!isAdmin() || !(cost > 0)) return '';
+    var prices = d.priceTarget ? d.priceTarget.prices : d.prices, label = d.priceTarget ? d.priceTarget.label : 'Standard';
+    var bad = [];
+    (prices || []).forEach(function (v, i) { if (v !== '' && v != null && Number(v) < cost) bad.push('x' + STOCK_PRICE_TIERS[i]); });
+    return bad.length ? '<span class="ms" style="font-size:15px;vertical-align:middle">warning</span> ราคาต่ำกว่าราคาทุน (' + esc(String(cost)) + '): ' + esc(label) + ' ' + esc(bad.join(', ')) : '';
   }
   function saveStockModal() {
     call('saveStockItem', session.token, state.draft).then(function () { toast('success', 'บันทึกแล้ว'); closeModal(); afterStockLogWrite(); refreshStockSuggestCache(); });
@@ -4273,7 +4331,9 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     { id: 'expired', label: 'หมดอายุแล้ว' }, { id: 'none', label: 'ไม่ระบุวันหมดอายุ' }
   ];
   function depositsTemplate() {
-    var L = state.deposits.list, q = (state.deposits.q || '').trim().toLowerCase(), f = state.deposits.filter;
+    // One tab per ยา Stock (A / B): the lot belongs to the stock its ยา is kept in.
+    var L = state.deposits.list && state.deposits.list.filter(function (x) { return (x.loc || 'A') === state.deposits.loc; });
+    var q = (state.deposits.q || '').trim().toLowerCase(), f = state.deposits.filter;
     var filtered = !L ? null : L.filter(function (x) {
       if (f && expiryState(x.expiry) !== f) return false;
       return !q || (x.patientName + ' ' + x.hn + ' ' + x.name).toLowerCase().indexOf(q) > -1;
@@ -4299,6 +4359,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         '</tr>';
       }).join(''));
     return '' +
+      tabBar([{ id: 'A', label: 'ยาฝาก ' + stockName('A') }, { id: 'B', label: 'ยาฝาก ' + stockName('B') }], state.deposits.loc, 'deposit-loc') +
       '<div class="grid-fit" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">' +
         statCard('vaccines', 'รายการยาฝากคงเหลือ', L ? esc(L.length) + ' <span style="font-size:15px;font-weight:500;color:var(--muted)">รายการ</span>' : '<span class="spin"></span>') +
         statCard('schedule', 'ใกล้หมดอายุ', L ? esc(count('soon')) + ' <span style="font-size:15px;font-weight:500;color:var(--muted)">รายการ</span>' : '<span class="spin"></span>') +
@@ -4750,7 +4811,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     call('listExpenses', session.token, { page: state.expense.page, filters: { q: state.expense.q, category: state.expense.category } }).then(function (res) { state.expense.list = res.data; state.expense.reloading = false; render(); });
   }
   function loadOrders() {
-    call('listOrders', session.token, { page: state.expense.orderPage, filters: { q: state.expense.orderQ, category: state.expense.orderCategory } }).then(function (res) { state.expense.orders = res.data; state.expense.orderReloading = false; render();
+    call('listOrders', session.token, { page: state.expense.orderPage, filters: { q: state.expense.orderQ, category: state.expense.orderCategory, type: state.expense.orderType } }).then(function (res) { state.expense.orders = res.data; state.expense.orderReloading = false; render();
       var op = state.expense.orderPanel; if (op && !op.loading) openOrderPanel(op.id, true); // an edit may have changed the open order
     });
   }
@@ -4810,24 +4871,53 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   }
 
   /* ---- จัดซื้อ (purchase orders, multi-line) ---- */
+  var ORDER_TYPE_FILTERS = [{ id: '', label: 'ทั้งหมด' }, { id: 'sales', label: 'ซื้อยาจากเซลล์' }, { id: 'general', label: 'ซื้ออื่นๆ / เวชภัณฑ์ทั่วไป' }];
+  function orderTypeBadge(o) {
+    return o.type === 'sales'
+      ? '<span class="tag-badge" style="background:var(--accent-soft);color:var(--accent);white-space:nowrap">ซื้อยาจากเซลล์</span>'
+      : '<span class="tag-badge" style="background:var(--border-soft);color:var(--text-2);white-space:nowrap">ซื้ออื่นๆ / เวชภัณฑ์</span>';
+  }
+  /** Stock items a PO line of this type can be: ยา for ซื้อยาจากเซลล์, everything else (เวชภัณฑ์...) for ซื้ออื่นๆ. */
+  function orderEligibleStock(type) {
+    return (state.suggestCache.stock || []).filter(function (x) { return type === 'sales' ? x.type === 'medicine' : x.type !== 'medicine'; });
+  }
+  function orderItemByText(type, text) {
+    var all = orderEligibleStock(type), t = String(text || '').trim();
+    var hit = all.filter(function (x) { return (x.label || x.name) === t; })[0];
+    if (hit) return hit;
+    var named = all.filter(function (x) { return x.name === t; });
+    return named.length === 1 ? named[0] : null;
+  }
+  /** After the PO type changed, re-links every line to a stock item of the new type (by its name) or unlinks it. */
+  function relinkOrderLines(d) {
+    (d.lines || []).forEach(function (l) {
+      var it = orderItemByText(d.type, l.itemName);
+      l.itemId = it ? it.id : '';
+      if (it && it.category && (state.master.stockCategories || []).some(function (c) { return c.name === it.category; })) l.category = it.category;
+    });
+  }
   function orderTabView() {
     var L = state.expense.orders;
-    var rows = !L ? '<tr><td colspan="4" class="empty-state"><span class="spin"></span> กำลังโหลด...</td></tr>' :
-      (!L.items.length ? '<tr><td colspan="4" class="empty-state">ไม่พบรายการ</td></tr>' :
+    var rows = !L ? '<tr><td colspan="5" class="empty-state"><span class="spin"></span> กำลังโหลด...</td></tr>' :
+      (!L.items.length ? '<tr><td colspan="5" class="empty-state">ไม่พบรายการ</td></tr>' :
       L.items.map(function (o) {
         var open = state.expense.orderPanel && state.expense.orderPanel.id === o.id;
-        return '<tr data-action="view-order" data-arg="' + esc(o.id) + '" style="cursor:pointer' + (open ? ';background:var(--hover-bg)' : '') + '"><td style="padding-left:12px">' + esc(o.date) + '</td><td>' + esc(o.supplier) + '</td><td>' + money(o.totalAmount) + '</td>' +
+        return '<tr data-action="view-order" data-arg="' + esc(o.id) + '" style="cursor:pointer' + (open ? ';background:var(--hover-bg)' : '') + '"><td style="padding-left:12px">' + esc(o.date) + '</td><td>' + orderTypeBadge(o) + '</td><td>' + esc(o.supplier) + '</td><td>' + money(o.totalAmount) + '</td>' +
           '<td style="text-align:right"><button class="btn" data-action="edit-order" data-arg="' + esc(o.id) + '"><span class="ms">edit</span></button> ' +
           (isAdmin() ? '<button class="btn" data-action="delete-order" data-arg="' + esc(o.id) + '"><span class="ms">delete</span></button>' : '') + '</td></tr>';
       }).join(''));
     return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">' +
         searchScopeBoxHtml('order', '240px') +
         '<button id="ddOrderCat" class="btn" data-action="dd-ordercat">' + esc((orderCatFilterOptions().filter(function (o) { return o.value === state.expense.orderCategory; })[0] || {}).label || 'หมวดหมู่ทั้งหมด') + ' <span class="ms">expand_more</span></button>' +
+        '<div class="pill-group">' + ORDER_TYPE_FILTERS.map(function (o) {
+          return '<button type="button" class="' + (state.expense.orderType === o.id ? 'active' : '') + '" data-action="order-type" data-arg="' + esc(o.id) + '">' + esc(o.label) + '</button>';
+        }).join('') + '</div>' +
         '<button class="btn btn-primary" style="margin-left:auto" data-action="new-order"><span class="ms">add</span> เพิ่มใบสั่งซื้อ</button>' +
       '</div>' +
+      '<div style="font-size:11.5px;color:var(--muted);margin:-6px 0 12px">ซื้อยาจากเซลล์ = เพิ่มยาเข้า stock โดยไม่นับเป็นค่าใช้จ่ายคลินิก (ต้นทุนยาไปอยู่ในค่าต้นทุนยา) · ซื้ออื่นๆ / เวชภัณฑ์ทั่วไป = เพิ่มเข้า stock และนับเป็นค่าใช้จ่ายคลินิก</div>' +
       listCardWrap(
         '<table class="table" style="width:100%;border-collapse:collapse">' +
-          '<thead><tr style="text-align:left;font-size:12px;color:var(--muted);background:var(--hover-bg)"><th style="padding:10px 12px">วันที่</th><th>ผู้จำหน่าย</th><th>ยอดรวม</th><th></th></tr></thead>' +
+          '<thead><tr style="text-align:left;font-size:12px;color:var(--muted);background:var(--hover-bg)"><th style="padding:10px 12px">วันที่</th><th>ประเภท</th><th>ผู้จำหน่าย / เซลล์</th><th>ยอดรวม</th><th></th></tr></thead>' +
           '<tbody>' + rows + '</tbody></table>', state.expense.orderReloading) + pagerHtml(L, 'order-page');
   }
   /* ---- PO detail side panel (own root, like the ยาฝาก one) ---- */
@@ -4876,7 +4966,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       '<div style="flex:1;overflow-y:auto;padding:0 22px 16px">' +
         '<div class="day-summary-section"><div class="day-summary-section-title">สรุปรายการ</div>' +
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 16px">' +
-            cell('วันที่', esc(o.date)) + cell('ผู้จำหน่าย', esc(o.supplier)) +
+            cell('วันที่', esc(o.date)) + cell('ประเภท', orderTypeBadge(o)) +
+            cell(o.type === 'sales' ? 'เซลล์' : 'ผู้จำหน่าย', esc(o.supplier)) + cell('ค่าใช้จ่ายคลินิก', o.type === 'sales' ? '<span style="color:var(--muted)">ไม่นับ (ต้นทุนยา)</span>' : 'นับ') +
             cell('จำนวนรายการ', esc(o.lines.length)) + cell('ยอดรวม', '<span style="font-size:15px;color:var(--accent-hover)">' + money(o.totalAmount) + '</span>') +
             cell('ผู้บันทึก', o.createdBy ? esc(o.createdBy) : '<span style="color:var(--muted)">-</span>') +
             cell('สต๊อก', o.stockApplied ? 'เพิ่มเข้าสต๊อกแล้ว' : '<span style="color:var(--muted)">ไม่ได้เชื่อมสต๊อก</span>') +
@@ -4890,7 +4981,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       '</div>';
     return sidePanelShell('close-order-panel', body, 'side-panel-wide');
   }
-  function newOrderModal() { openModal('order', { date: todayStr(), supplier: '', lines: [{ category: (state.master.stockCategories[0] || {}).name || '', itemName: '', qty: 1, unitPrice: 0 }] }); }
+  function newOrderModal() { openModal('order', { type: 'general', salesId: '', date: todayStr(), supplier: '', lines: [{ category: (state.master.stockCategories[0] || {}).name || '', itemName: '', qty: 1, unitPrice: 0 }] }); }
   function editOrderModal(id) {
     call('getOrder', session.token, id).then(function (res) { openModal('order', res.data); });
   }
@@ -4931,11 +5022,15 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         '<div id="orderLineCap' + i + '" style="font-size:11px;margin-left:128px">' + orderLineCaption(l) + '</div>' +
       '</div>';
     }).join('');
-    var stockOpts = (state.suggestCache.stock || []).map(function (s) {
+    var stockOpts = orderEligibleStock(d.type).map(function (s) {
       return '<option value="' + esc(s.label || s.name) + '">' + esc(stockTypeLabel(s.type) + (s.category ? ' · ' + s.category : '')) + '</option>';
     }).join('');
+    var isSales = d.type === 'sales';
+    var salesOpts = [{ value: '', label: '— เลือกเซลล์ —' }].concat((state.master.sales || []).map(function (x) { return { value: x.id, label: x.name }; }));
     return modalHeader(d.id ? 'แก้ไขใบสั่งซื้อ' : 'เพิ่มใบสั่งซื้อ') +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">' + field('วันที่', bindInput('date', 'date')) + field('ผู้จำหน่าย', bindInput('supplier')) + '</div>' +
+      field('ประเภทใบสั่งซื้อ', bindSelect('type', [{ value: 'general', label: 'ซื้ออื่นๆ / เวชภัณฑ์ทั่วไป (เพิ่มเข้า stock · นับเป็นค่าใช้จ่ายคลินิก)' }, { value: 'sales', label: 'ซื้อยาจากเซลล์ (เพิ่มเข้า stock · ไม่นับเป็นค่าใช้จ่ายคลินิก)' }])) +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">' + field('วันที่', bindInput('date', 'date')) +
+        (isSales ? field('ชื่อเซลล์', bindSelect('salesId', salesOpts)) : field('ผู้จำหน่าย', bindInput('supplier'))) + '</div>' +
       '<div style="margin-bottom:6px"><label style="font-size:12px;color:var(--text-2)">รายการสินค้า</label></div>' +
       lineHeader + lines + '<datalist id="dlOrderStock">' + stockOpts + '</datalist>' +
       '<button class="btn" data-action="add-order-line" style="margin-bottom:12px"><span class="ms">add</span> เพิ่มรายการ</button>' +
@@ -4948,10 +5043,12 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   function orderLineCaption(l) {
     var s = l.itemId ? (state.suggestCache.stock || []).filter(function (x) { return x.id === l.itemId; })[0] : null;
     if (s) return '<span style="color:var(--green-dark)"><span class="ms" style="font-size:13px;vertical-align:middle">add_circle</span> เพิ่มเข้าสต๊อก' + esc(stockTypeLabel(s.type)) + (s.unit ? ' (' + esc(s.unit) + ')' : '') + '</span>';
+    if (String(l.itemName || '').trim() && state.draft && state.draft.type === 'sales') return '<span style="color:var(--red-dark)">ซื้อยาจากเซลล์ต้องเลือกยาจากสต๊อกยา</span>';
     return String(l.itemName || '').trim() ? '<span style="color:var(--muted)">ไม่อยู่ในสต๊อก — ไม่เพิ่มจำนวนสต๊อก</span>' : '';
   }
   function saveOrderModal() {
     if (!state.draft.lines.length) { toast('error', 'กรุณาเพิ่มรายการสินค้าอย่างน้อย 1 รายการ'); return; }
+    if (state.draft.type === 'sales' && !state.draft.salesId) { toast('error', 'กรุณาเลือกชื่อเซลล์'); return; }
     call('saveOrder', session.token, state.draft).then(function () {
       toast('success', 'บันทึกใบสั่งซื้อแล้ว'); closeModal(); loadOrders();
       if (state.stock.list) loadStock();
@@ -5085,8 +5182,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   }
 
   function loadDoctorsSales() {
-    Promise.all([call('listDoctors', session.token), call('listSales', session.token)]).then(function (res) {
-      settingsData.doctors = res[0].data; settingsData.sales = res[1].data; render();
+    Promise.all([call('listDoctors', session.token), call('listSales', session.token), call('listSaleGroups', session.token)]).then(function (res) {
+      settingsData.doctors = res[0].data; settingsData.sales = res[1].data; settingsData.groups = res[2].data; render();
     });
   }
   function settingsDoctorsView() {
@@ -5109,19 +5206,95 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     var doctorCards = settingsData.doctors.map(function (d) {
       return personCard(d, 'edit-doctor', 'delete-doctor', '% Commission', Number(d.commissionPct) || 0, 'ยอดขั้นต่ำ/วัน', money(d.minAmount || 0));
     }).join('');
-    var salesCards = settingsData.sales.map(function (s) {
-      // No ยอดขั้นต่ำ for sales: only the doctor's daily minimum is applied (recomputeDoctorDayShares_).
-      return personCard(s, 'edit-sales', 'delete-sales', 'อัตราคอมมิชชั่น', Number(s.commissionRate) || 0, 'Sale group', esc(s.group || '-'));
+    // Sale group (left) > เซลล์ of the selected group (right); '__all__' = every เซลล์, '__none__' = เซลล์ without a group.
+    var selGroup = selectedGroupId();
+    var groupName = function (id) { return ((settingsData.groups || []).filter(function (g) { return g.id === id; })[0] || {}).name || ''; };
+    // One card per เซลล์, stacked: ชื่อเซลล์ · Sale group (dropdown, every move is written to AuditLog) · สถานะ · อัตราค่าคอม · แก้ไข · ลบ.
+    var cellOf = function (label, html, w) { return '<div style="' + (w ? 'width:' + w + ';' : '') + 'min-width:0;flex:none"><div style="font-size:11px;color:var(--muted);margin-bottom:3px">' + label + '</div>' + html + '</div>'; };
+    var salesCards = settingsData.sales.filter(function (x) { return selGroup === '__all__' ? true : (selGroup === '__none__' ? !x.groupId : x.groupId === selGroup); }).map(function (x) {
+      var groupCell = isAdmin()
+        ? '<select data-action-change="sales-group" data-arg="' + esc(x.id) + '" style="' + inputStyle + ';padding:6px 8px;font-size:12.5px">' +
+            [{ id: '', name: '— ไม่มีกลุ่ม —' }].concat(settingsData.groups || []).filter(function (g) { return !g.id || g.status !== 'inactive' || g.id === x.groupId; })
+              .map(function (g) { return '<option value="' + esc(g.id) + '"' + (g.id === (x.groupId || '') ? ' selected' : '') + '>' + esc(g.name) + '</option>'; }).join('') + '</select>'
+        : '<div style="font-size:13px;font-weight:600">' + esc(groupName(x.groupId) || '-') + '</div>';
+      var active = x.status === 'active';
+      return '<div class="card sale-row">' +
+        '<div style="flex:1 1 170px;min-width:150px"><div style="font-size:11px;color:var(--muted);margin-bottom:3px">ชื่อเซลล์</div><div style="font-weight:700;font-size:14px">' + esc(x.name) + '</div></div>' +
+        cellOf('Sale group', groupCell, '190px') +
+        cellOf('สถานะ', '<span class="tag-badge" style="background:' + (active ? 'var(--green-soft)' : 'var(--red-soft)') + '">' + (active ? 'ทำงาน' : 'พักงาน') + '</span>', '90px') +
+        cellOf('อัตราค่าคอม', '<div style="font-size:16px;font-weight:700;color:var(--accent)">' + (Number(x.commissionRate) || 0) + '%</div>', '100px') +
+        (isAdmin() ? '<div style="display:flex;gap:4px;flex:none"><button class="btn" data-action="edit-sales" data-arg="' + esc(x.id) + '" title="แก้ไข"><span class="ms">edit</span></button>' +
+          '<button class="btn" data-action="delete-sales" data-arg="' + esc(x.id) + '" title="ลบ"><span class="ms">delete</span></button></div>' : '') +
+      '</div>';
     }).join('');
+    var groupRow = function (id, name, count, g) {
+      var on = id === selGroup, inactive = g && g.status === 'inactive';
+      var icon = g ? 'groups' : (id === '__all__' ? 'diversity_3' : 'person_off');
+      return '<div data-action="select-salegroup" data-arg="' + esc(id) + '" style="display:flex;align-items:center;gap:8px;padding:11px 12px;border-radius:var(--r-sm);cursor:pointer;border:1px solid ' + (on ? 'var(--accent)' : 'transparent') + ';background:' + (on ? 'var(--accent-soft)' : 'transparent') + '">' +
+        '<span class="ms" style="font-size:19px;color:' + (on ? 'var(--accent)' : 'var(--muted)') + '">' + icon + '</span>' +
+        '<div style="flex:1;min-width:0"><div style="font-weight:' + (on ? 700 : 600) + ';font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(name) + '</div>' +
+        (inactive ? '<div style="font-size:11px;color:var(--red-dark)">ปิดใช้งาน</div>' : '') + '</div>' +
+        '<span class="tag-badge" style="background:' + (on ? '#fff' : 'var(--border-soft)') + '">' + count + ' คน</span>' +
+      '</div>';
+    };
+    var noGroupCount = settingsData.sales.filter(function (x) { return !x.groupId; }).length;
+    var groupList = groupRow('__all__', 'ทั้งหมด', settingsData.sales.length, null) +
+      (settingsData.groups || []).map(function (g) { return groupRow(g.id, g.name, g.members.length, g); }).join('') +
+      groupRow('__none__', 'ไม่มีกลุ่ม', noGroupCount, null);
+    var curGroup = (settingsData.groups || []).filter(function (g) { return g.id === selGroup; })[0];
+    var rightTitle = curGroup ? curGroup.name : (selGroup === '__all__' ? 'เซลล์ทั้งหมด' : 'เซลล์ที่ยังไม่มีกลุ่ม');
+    var rightActions = isAdmin() ? (curGroup ? '<button class="btn" data-action="edit-salegroup" data-arg="' + esc(curGroup.id) + '" title="แก้ไขกลุ่ม"><span class="ms">edit</span></button>' +
+      '<button class="btn" data-action="delete-salegroup" data-arg="' + esc(curGroup.id) + '" title="ลบกลุ่ม"><span class="ms">delete</span></button>' : '') +
+      '<button class="btn btn-primary" data-action="new-sales"><span class="ms">add</span> เพิ่มเซลล์</button>' : '';
     return '' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-weight:700;font-size:14.5px">แพทย์</div>' +
         (isAdmin() ? '<button class="btn btn-primary" data-action="new-doctor"><span class="ms">add</span> เพิ่มแพทย์</button>' : '') + '</div>' +
       '<div class="grid-fit" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:26px">' +
         (doctorCards || '<div class="empty-state">ไม่มีข้อมูล</div>') + '</div>' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-weight:700;font-size:14.5px">เซลล์</div>' +
-        (isAdmin() ? '<button class="btn btn-primary" data-action="new-sales"><span class="ms">add</span> เพิ่มเซลล์</button>' : '') + '</div>' +
-      '<div class="grid-fit" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px">' +
-        (salesCards || '<div class="empty-state">ไม่มีข้อมูล</div>') + '</div>';
+      '<div class="sg-split">' +
+        '<div class="card" style="border:1px solid var(--border);border-radius:var(--r);padding:14px;align-self:start">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><div style="font-weight:700;font-size:14.5px">Sale group</div>' +
+            (isAdmin() ? '<button class="btn" data-action="new-salegroup"><span class="ms">add</span> เพิ่มกลุ่ม</button>' : '') + '</div>' +
+          '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">เซลล์ 1 คนอยู่ได้ 1 กลุ่ม · ราคายาตั้งตามกลุ่มหรือตามเซลล์ได้ที่หน้าจัดการสินค้า/บริการ · ลบหรือปิดกลุ่มที่ยังมีสมาชิกไม่ได้</div>' +
+          '<div style="display:flex;flex-direction:column;gap:4px">' + groupList + '</div>' +
+        '</div>' +
+        '<div>' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap"><div style="font-weight:700;font-size:14.5px">' + (curGroup ? '<span style="color:var(--muted);font-weight:500">เซลล์ใน</span> ' : '') + esc(rightTitle) + '</div>' +
+            '<div style="display:flex;gap:6px">' + rightActions + '</div></div>' +
+          '<div style="display:flex;flex-direction:column;gap:10px">' +
+            (salesCards || '<div class="empty-state">' + (curGroup ? 'ยังไม่มีเซลล์ในกลุ่มนี้' : (selGroup === '__all__' ? 'ยังไม่มีเซลล์' : 'ไม่มีเซลล์ที่ไม่มีกลุ่ม')) + '</div>') + '</div>' +
+        '</div>' +
+      '</div>';
+  }
+  /** The Sale group shown on the right: ทั้งหมด (default), ไม่มีกลุ่ม, or a group that still exists. */
+  function selectedGroupId() {
+    var groups = settingsData.groups || [], cur = settingsData.selGroup;
+    if (cur === '__none__' || groups.some(function (g) { return g.id === cur; })) return cur;
+    return '__all__';
+  }
+  function newSaleGroupModal() { openModal('salegroup', { name: '', status: 'active' }); }
+  function editSaleGroupModal(id) { var g = (settingsData.groups || []).filter(function (x) { return x.id === id; })[0]; if (g) openModal('salegroup', { id: g.id, name: g.name, status: g.status }); }
+  function deleteSaleGroupConfirm(id) {
+    Swal.fire({ icon: 'warning', title: 'ลบ Sale group นี้?', text: 'ราคาเฉพาะกลุ่มนี้จะถูกลบด้วย', showCancelButton: true, confirmButtonText: 'ลบ', cancelButtonText: 'ยกเลิก', confirmButtonColor: '#C08585' }).then(function (r) {
+      if (!r.isConfirmed) return;
+      call('deleteSaleGroup', session.token, id).then(function () { toast('success', 'ลบแล้ว'); settingsData.doctors = null; loadDoctorsSales(); refreshMaster(); refreshStockSuggestCache(); });
+    });
+  }
+  function saleGroupModalBody() {
+    var d = state.draft;
+    return modalHeader(d.id ? 'แก้ไข Sale group' : 'เพิ่ม Sale group') + field('ชื่อกลุ่ม', bindInput('name')) +
+      (d.id ? field('สถานะ', bindSelect('status', [{ value: 'active', label: 'ใช้งาน' }, { value: 'inactive', label: 'ปิดใช้งาน (ต้องไม่มีสมาชิก)' }])) : '') + saveBtn();
+  }
+  function saveSaleGroupModal() {
+    call('saveSaleGroup', session.token, state.draft).then(function () { toast('success', 'บันทึกแล้ว'); closeModal(); settingsData.doctors = null; loadDoctorsSales(); refreshMaster(); refreshStockSuggestCache(); });
+  }
+  /** Moves a เซลล์ to another Sale group straight from the card's dropdown. */
+  function changeSalesGroup(id, groupId) {
+    var sale = (settingsData.sales || []).filter(function (x) { return x.id === id; })[0];
+    if (!sale) return;
+    call('saveSales', session.token, Object.assign({}, sale, { groupId: groupId })).then(function () {
+      toast('success', 'ย้ายกลุ่มแล้ว'); settingsData.doctors = null; loadDoctorsSales(); refreshMaster(); refreshStockSuggestCache();
+    }, function () { settingsData.doctors = null; loadDoctorsSales(); });
   }
   function newDoctorModal() { openModal('doctor', { name: '', status: 'active', minAmount: 0, commissionPct: 0 }); }
   function editDoctorModal(id) { var x = settingsData.doctors.filter(function (d) { return d.id === id; })[0]; if (x) openModal('doctor', Object.assign({}, x)); }
@@ -5140,7 +5313,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   function saveDoctorModal() {
     call('saveDoctor', session.token, state.draft).then(function () { toast('success', 'บันทึกแล้ว'); closeModal(); settingsData.doctors = null; loadDoctorsSales(); refreshMaster(); });
   }
-  function newSalesModal() { openModal('sales', { name: '', status: 'active', commissionRate: 0, minAmount: 0, group: '' }); }
+  function newSalesModal() { var g = selectedGroupId(); openModal('sales', { name: '', status: 'active', commissionRate: 0, minAmount: 0, groupId: (g === '__none__' || g === '__all__') ? '' : g }); }
   function editSalesModal(id) { var x = settingsData.sales.filter(function (s) { return s.id === id; })[0]; if (x) openModal('sales', Object.assign({}, x)); }
   function deleteSalesConfirm(id) {
     Swal.fire({ icon: 'warning', title: 'ลบข้อมูลเซลล์?', showCancelButton: true, confirmButtonText: 'ลบ', cancelButtonText: 'ยกเลิก', confirmButtonColor: '#C08585' }).then(function (r) {
@@ -5154,9 +5327,9 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       field('สถานะ', bindSelect('status', [{ value: 'active', label: 'ทำงาน' }, { value: 'inactive', label: 'พักงาน' }])) +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">' +
         field('อัตราค่าคอมมิชชั่น (%)', bindInput('commissionRate', 'number')) +
-        field('Sale group', bindSelect('group', [{ value: '', label: '— ไม่มีกลุ่ม —' }].concat((state.master.saleGroups || []).map(function (g) { return { value: g.name, label: g.name }; })))) +
+        field('Sale group', bindSelect('groupId', [{ value: '', label: '— ไม่มีกลุ่ม —' }].concat((state.master.saleGroups || []).map(function (g) { return { value: g.id, label: g.name }; })))) +
       '</div>' +
-      '<div style="font-size:11.5px;color:var(--muted);margin-top:-4px">เพิ่ม Sale group ได้ที่แท็บหมวดหมู่ · ราคายาของเซลล์: Sale Agent → Sale group → Standard</div>' + saveBtn();
+      '<div style="font-size:11.5px;color:var(--muted);margin-top:-4px">เพิ่ม Sale group ได้ที่ด้านล่างของหน้านี้ · ราคายาของเซลล์: Sale Agent → Sale group → Standard</div>' + saveBtn();
   }
   function saveSalesModal() {
     call('saveSales', session.token, state.draft).then(function () { toast('success', 'บันทึกแล้ว'); closeModal(); settingsData.sales = null; loadDoctorsSales(); refreshMaster(); });
@@ -5169,9 +5342,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     call('listCategories', session.token).then(function (res) { settingsData.categories = res.data; render(); });
   }
   // 'treatment' categories group the รายการหัตถการ (จัดการสินค้า/บริการ).
-  // 'salegroup' rows are the Sale groups a เซลล์ belongs to (ราคายาตามกลุ่ม).
-  var CAT_TYPE_LABEL = { stock: 'หมวดหมู่สินค้า', treatment: 'หมวดหมู่หัตถการ', expense: 'หมวดหมู่ค่าใช้จ่าย', salegroup: 'Sale group (กลุ่มเซลล์)' };
-  var CAT_TYPE_ORDER = ['stock', 'treatment', 'expense', 'salegroup'];
+  var CAT_TYPE_LABEL = { stock: 'หมวดหมู่สินค้า', treatment: 'หมวดหมู่หัตถการ', expense: 'หมวดหมู่ค่าใช้จ่าย' };
+  var CAT_TYPE_ORDER = ['stock', 'treatment', 'expense'];
   function settingsCategoriesView() {
     if (!settingsData.categories) { loadCategoriesTab(); return '<div class="empty-state"><span class="spin"></span> กำลังโหลด...</div>'; }
     var groups = CAT_TYPE_ORDER.map(function (t) {
@@ -5294,6 +5466,15 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       (isAdmin() ? '<button class="btn btn-primary" data-action="save-clinic-info">บันทึกข้อมูลบริษัท</button>' : '') +
     '</div>' +
     (isAdmin() ? '<div class="card" style="border:1px solid var(--border);border-radius:var(--r);padding:18px;max-width:520px;margin-top:16px">' +
+      '<div style="font-weight:700;margin-bottom:4px">ชื่อ Stock ยา (Stock A / B)</div>' +
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">ชื่อที่ตั้งจะแสดงแทน "Stock A" / "Stock B" ทุกหน้า เช่น แท็บในหน้าจัดการสินค้า/บริการ, รายการยาฝาก, ช่องเลือกยาใน OPD และใบ OPD (ไม่เกิน 30 ตัวอักษร ห้ามซ้ำกัน)</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">' +
+        field('ชื่อ Stock A', '<input type="text" id="clinic_stockNameA" maxlength="30" value="' + esc(c.stockNameA || '') + '" placeholder="Stock A" style="' + inputStyle + '">') +
+        field('ชื่อ Stock B', '<input type="text" id="clinic_stockNameB" maxlength="30" value="' + esc(c.stockNameB || '') + '" placeholder="Stock B" style="' + inputStyle + '">') +
+      '</div>' +
+      '<button class="btn btn-primary" data-action="save-stock-names">บันทึกชื่อ Stock</button>' +
+    '</div>' : '') +
+    (isAdmin() ? '<div class="card" style="border:1px solid var(--border);border-radius:var(--r);padding:18px;max-width:520px;margin-top:16px">' +
       '<div style="font-weight:700;margin-bottom:4px">โลโก้คลินิก</div>' +
       '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">ใช้แสดงในเมนูด้านซ้ายและพิมพ์บนใบเสร็จ จัดเก็บใน Google Drive ของคลินิก</div>' +
       (settingsData.logoUrl ? '<img src="' + esc(settingsData.logoUrl) + '" style="width:84px;height:84px;object-fit:cover;border-radius:12px;margin-bottom:10px;display:block">' : '') +
@@ -5312,10 +5493,20 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       (settingsData.loginImageUrl ? '<button class="btn" data-action="remove-login-image" style="margin-top:8px"><span class="ms">delete</span> ลบรูปภาพ</button>' : '') +
     '</div>' : '');
   }
+  /** Saves the two stock names; the picker labels and the stock tabs follow at once. */
+  function saveStockNames() {
+    var payload = { stockNameA: document.getElementById('clinic_stockNameA').value, stockNameB: document.getElementById('clinic_stockNameB').value };
+    call('saveClinicSettings', session.token, payload).then(function () {
+      toast('success', 'บันทึกชื่อ Stock แล้ว');
+      settingsData.clinicInfo = Object.assign({}, settingsData.clinicInfo, { stockNameA: payload.stockNameA.trim(), stockNameB: payload.stockNameB.trim() });
+      if (state.master) state.master.clinicInfo = Object.assign({}, state.master.clinicInfo, settingsData.clinicInfo);
+      relabelStockCache(); render(); refreshMaster();
+    });
+  }
   function saveClinicInfo() {
     var payload = {};
     ['name', 'address', 'phone', 'taxId', 'email', 'driveUrl'].forEach(function (k) { payload[k] = document.getElementById('clinic_' + k).value; });
-    call('saveClinicSettings', session.token, payload).then(function () { toast('success', 'บันทึกข้อมูลบริษัทแล้ว'); settingsData.clinicInfo = payload; refreshMaster(); });
+    call('saveClinicSettings', session.token, payload).then(function () { toast('success', 'บันทึกข้อมูลบริษัทแล้ว'); settingsData.clinicInfo = Object.assign({}, settingsData.clinicInfo, payload); refreshMaster(); });
   }
 
   function loadStaff() { call('listStaff', session.token).then(function (res) { state.settings.staff = res.data; render(); }); }
@@ -5431,6 +5622,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         var sameLogo = old.clinicInfo && res.data.clinicInfo && old.clinicInfo.logoFileId === res.data.clinicInfo.logoFileId;
         state.master = res.data;
         if (sameLogo && old.logoUrl) state.master.logoUrl = old.logoUrl;
+        relabelStockCache();
       }
       render();
     });
@@ -5457,6 +5649,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       case 'order': return orderModalBody();
       case 'doctor': return doctorModalBody();
       case 'sales': return salesModalBody();
+      case 'salegroup': return saleGroupModalBody();
       case 'promotion': return promotionModalBody();
       case 'category': return categoryModalBody();
       case 'staff': return staffModalBody();
@@ -5480,6 +5673,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       case 'order': return saveOrderModal();
       case 'doctor': return saveDoctorModal();
       case 'sales': return saveSalesModal();
+      case 'salegroup': return saveSaleGroupModal();
       case 'promotion': return savePromotionModal();
       case 'category': return saveCategoryModal();
       case 'staff': return saveStaffModal();
@@ -5622,6 +5816,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       case 'dd-wd-actions': openWithdrawActions(arg); break;
       case 'dd-record-actions': openRecordActions(arg); break;
       case 'view-deposit': toggleDepositPanel(arg); break;
+      case 'deposit-loc': if (arg !== state.deposits.loc) { state.deposits.loc = arg; state.deposits.page = 1; state.deposits.q = ''; if (state.deposits.panel) closeDepositPanel(); render(); } break;
       case 'close-deposit-panel': case 'close-deposit-panel-bg': if (ev.target === el || action === 'close-deposit-panel') closeDepositPanel(); break;
       case 'report-block': openReportPdfPreview(arg); break;
       case 'dd-doctor': openPortal('ddDoctor', doctorFilterOptions(), function (v) { state.records.doctorId = v; state.records.page = 1; state.records.reloading = true; render(); loadRecords(); }, state.records.doctorId); break;
@@ -5650,8 +5845,27 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       case 'add-medicine-other-row': state.draft.medicineItems.push(newDispenseLine(true)); render(); break;
       case 'remove-opd-photo': removeOpdPhoto(); break;
       case 'new-stock': newStockModal(); break;
-      case 'add-price-ovr': state.draft.priceOverrides.push({ scope: 'group', key: '', prices: STOCK_PRICE_TIERS.map(function () { return ''; }) }); render(); break;
-      case 'remove-price-ovr': state.draft.priceOverrides.splice(Number(arg), 1); render(); break;
+      case 'save-stock-names': saveStockNames(); break;
+      case 'dd-stock-menu': {
+        var stockLbl = stockPageLabel();
+        openPortal('ddStockMenu', [
+          { value: 'add', label: 'เพิ่ม' + stockLbl, icon: 'add' },
+          { value: 'update', label: 'อัพเดตสต๊อก' + stockLbl, icon: 'inventory' },
+          { value: 'upload', label: 'อัปโหลด CSV', icon: 'upload_file' },
+          { value: 'template', label: 'ดาวน์โหลด Template CSV', icon: 'download' }
+        ], function (v) {
+          if (v === 'add') newStockModal();
+          else if (v === 'update') newStockUpdateModal();
+          else if (v === 'upload') pickStockCsv();
+          else if (v === 'template') downloadStockCsvTemplate();
+        }, null);
+        break;
+      }
+      case 'select-salegroup': settingsData.selGroup = arg; render(); break;
+      case 'new-salegroup': newSaleGroupModal(); break;
+      case 'edit-salegroup': editSaleGroupModal(arg); break;
+      case 'delete-salegroup': deleteSaleGroupConfirm(arg); break;
+      case 'clear-price-target': state.draft.priceTarget.prices = STOCK_PRICE_TIERS.map(function () { return ''; }); render(); break;
       case 'dd-price-group': openPortal('ddPriceGroup', priceGroupFilterOptions(), function (v) { state.stock.priceGroup = v; state.stock.page = 1; state.stock.reloading = true; render(); loadStock(); }, state.stock.priceGroup); break;
       case 'dd-price-agent': openPortal('ddPriceAgent', priceAgentFilterOptions(), function (v) { state.stock.priceSalesId = v; state.stock.page = 1; state.stock.reloading = true; render(); loadStock(); }, state.stock.priceSalesId); break;
       case 'edit-stock': editStockModal(arg); break;
@@ -5697,6 +5911,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       case 'delete-expense': deleteExpenseConfirm(arg); break;
       case 'expense-page': state.expense.page = Number(arg); render(); loadExpenses(); break;
       case 'new-order': newOrderModal(); break;
+      case 'order-type': state.expense.orderType = arg; state.expense.orderPage = 1; state.expense.orderReloading = true; render(); loadOrders(); break;
       case 'edit-order': editOrderModal(arg); break;
       case 'delete-order': deleteOrderConfirm(arg); break;
       case 'order-page': state.expense.orderPage = Number(arg); render(); loadOrders(); break;
@@ -5743,6 +5958,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   document.addEventListener('change', function (ev) {
     var el = ev.target.closest('[data-action-change]');
     if (el && el.getAttribute('data-action-change') === 'dash-range') onDashRangeChange();
+    if (el && el.getAttribute('data-action-change') === 'sales-group') changeSalesGroup(el.getAttribute('data-arg'), el.value);
     if (el && el.getAttribute('data-action-change') === 'board-date') { state.board.date = el.value || todayStr(); state.board.data = null; render(); loadBoard(); }
   });
 
@@ -5789,12 +6005,12 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       if (totEl) totEl.textContent = 'รวมทั้งสิ้น ' + money(state.draft.lines.reduce(function (sum, l) { return sum + orderLineAmount(l); }, 0));
       return;
     }
+    // PO type changed: lines are re-linked to stock items of the new type, and the form redraws (เซลล์ vs ผู้จำหน่าย).
+    if (state.modal && state.modal.type === 'order' && bindPath === 'type') { relinkOrderLines(state.draft); render(); return; }
     var orderPick = state.modal && state.modal.type === 'order' && bindPath.match(/^lines\.(\d+)\.itemName$/);
     if (orderPick) {
       var oLine = state.draft.lines[Number(orderPick[1])];
-      var oText = String(val).trim(), oAll = state.suggestCache.stock || [];
-      var oItem = oAll.filter(function (s) { return (s.label || s.name) === oText; })[0] ||
-        (oAll.filter(function (s) { return s.name === oText; }).length === 1 ? oAll.filter(function (s) { return s.name === oText; })[0] : null);
+      var oItem = orderItemByText(state.draft.type, val);
       oLine.itemId = oItem ? oItem.id : '';
       if (oItem && oItem.category && (state.master.stockCategories || []).some(function (c) { return c.name === oItem.category; })) {
         oLine.category = oItem.category;
@@ -5812,12 +6028,18 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       if (wdCap) wdCap.innerHTML = withdrawLineCaption(state.draft.lines[Number(wdLine[1])]);
       return;
     }
-    // The stock form shows ราคาทุน/ราคาขาย only for ยา, so switching type redraws it.
-    if (state.modal && state.modal.type === 'stock' && (bindPath === 'type' || /^priceOverrides\.\d+\.scope$/.test(bindPath))) {
-      var scopeMatch = bindPath.match(/^priceOverrides\.(\d+)\.scope$/);
-      if (scopeMatch) state.draft.priceOverrides[Number(scopeMatch[1])].key = ''; // a group name is not a SalesID
-      render(); return;
+    // Stock form: any price or the cost changing re-checks the "under cost" note and box colours in place.
+    if (state.modal && state.modal.type === 'stock' && (/^(costPrice|prices\.\d+|priceTarget\.prices\.\d+)$/.test(bindPath))) {
+      var warnEl = document.getElementById('stockCostWarn');
+      if (warnEl) warnEl.innerHTML = belowCostWarning(state.draft);
+      var costNum = Number(state.draft.costPrice);
+      document.querySelectorAll('.modal [data-bind^="prices."], .modal [data-bind*=".prices."]').forEach(function (inp) {
+        inp.style.borderColor = isAdmin() && costNum > 0 && inp.value !== '' && Number(inp.value) < costNum ? 'var(--red-dark)' : '';
+      });
+      return;
     }
+    // The stock form shows ราคาทุน/ราคาขาย only for ยา, so switching type redraws it.
+    if (state.modal && state.modal.type === 'stock' && bindPath === 'type') { render(); return; }
     if (state.modal && state.modal.type === 'stockadjust') {
       if (bindPath === 'kind') { render(); return; } // label of the qty field depends on the kind
       var adjustPreview = document.getElementById('stockAdjustPreview');
@@ -5827,11 +6049,23 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     // Typing/picking a name that exactly matches a stock item links the line
     // to it (itemId) and, for a เวชภัณฑ์ line, fills its unit — patched
     // straight into the unit input, not via render(), so the caret stays put.
+    // Changing a ซื้อยาเพิ่ม line's Stock A/B clears its ยา (the pick must come from that stock).
+    var locChange = bindPath.match(/^medicineItems\.(\d+)\.loc$/);
+    if (locChange) {
+      var locLine = state.draft.medicineItems[Number(locChange[1])];
+      locLine.itemId = ''; locLine.name = ''; locLine.unitPrice = ''; locLine._priceTyped = false;
+      recalcDispenseLine(locLine);
+      render(); updateRecordPreview();
+      return;
+    }
     var stockPick = bindPath.match(STOCK_NAME_PICK_RE);
     if (stockPick && stockPick[1] === 'medicineItems' && (state.draft.medicineItems[Number(stockPick[2])] || {}).other) return; // ยาอื่นๆ: free text
     if (stockPick) {
       var stockLine = getPath(state.draft, stockPick[1] + '.' + stockPick[2]);
-      var stockItem = stockItemByPickText(stockPick[1] === 'supplies' ? 'supply' : 'medicine', val);
+      var pickText = String(val).trim();
+      var stockItem = stockPick[1] === 'medicineItems' && stockLine && stockLine.loc
+        ? (stockItemsOfType('medicine', stockLine.loc).filter(function (x) { return x.name === pickText || (x.label || x.name) === pickText; })[0] || null)
+        : stockItemByPickText(stockPick[1] === 'supplies' ? 'supply' : 'medicine', val);
       if (stockLine) {
         stockLine.itemId = stockItem ? stockItem.id : '';
         if (stockItem && stockPick[1] === 'supplies' && stockItem.unit) {
