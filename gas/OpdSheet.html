@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<?
+  // ใบ OPD (A5) of one treatment record — data from buildOpdSheetData_ in Code.js:
+  // header, รายละเอียดคนไข้, เซลล์, รายการยา, รายการหัตถการ, รายการอื่นๆ.
+  // No money totals beyond each line's own amount; the receipt is the bill.
+  function escO_(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function moneyO_(n) { return Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function rowsO_(rows, cols) {
+    if (!rows.length) return '<tr><td class="none" colspan="' + cols + '">-</td></tr>';
+    return rows.join('');
+  }
+  var d = data;
+  var medRows = d.medicines.map(function (m) {
+    return '<tr><td class="kind">' + escO_(m.kind) + '</td><td>' + escO_(m.name) + (m.note ? '<div class="sub">' + escO_(m.note) + '</div>' : '') + '</td>' +
+      '<td class="num">' + escO_(m.qty) + '</td><td class="num">' + (m.amount == null ? '-' : moneyO_(m.amount)) + '</td></tr>';
+  });
+  var procRows = d.procedures.map(function (p) {
+    return '<tr><td>' + escO_(p.name) + (p.detail ? '<div class="sub">' + escO_(p.detail) + '</div>' : '') + '</td><td>' + escO_(p.doctor || '-') + '</td><td class="num">' + moneyO_(p.amount) + '</td></tr>';
+  });
+  var otherRows = d.others.map(function (o) {
+    return '<tr><td class="kind">' + escO_(o.kind) + '</td><td>' + escO_(o.name) + '</td><td class="num">' + (o.amount == null ? '-' : moneyO_(o.amount)) + '</td></tr>';
+  });
+?>
+<html lang="th">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ใบ OPD | <?= d.clinic.name || 'ARICH CLINIC' ?></title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --ink: #3A2226; --ink-soft: #A28A8E; --line: #EEDFDF; --line-soft: #F3E7E7; --accent: #9C5862; --accent-deep: #82444E; --tint: #F6E7E9; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #F6E7E9; font-family: 'Noto Sans Thai', 'Segoe UI', Tahoma, sans-serif; color: var(--ink); }
+    body { padding: 18px; font-size: 10.5px; line-height: 1.45; }
+    /* A5 (148 x 210 mm): the same size on screen, in the PDF and on paper. */
+    @page { size: A5 portrait; margin: 0; }
+    .sheet { width: 148mm; min-height: 210mm; margin: 0 auto; background: #fff; padding: 9mm 8mm; box-shadow: 0 1px 3px rgba(74,43,49,.10); }
+    .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; border-bottom: 2px solid var(--accent); padding-bottom: 7px; }
+    .head-left { display: flex; gap: 8px; align-items: center; }
+    .logo { width: 44px; height: 44px; border-radius: 9px; object-fit: cover; flex: none; }
+    .clinic-name { font-size: 13.5px; font-weight: 700; color: var(--accent-deep); margin: 0; }
+    .meta { margin: 0; color: var(--ink-soft); font-size: 9px; }
+    .title { text-align: right; }
+    .title .t { font-size: 15px; font-weight: 700; color: var(--accent-deep); margin: 0; }
+    .title .en { display: block; font-size: 9px; letter-spacing: 1.5px; color: var(--ink-soft); font-weight: 500; }
+    .badge { display: inline-block; margin-top: 4px; background: var(--tint); color: var(--accent-deep); border-radius: 10px; padding: 1px 8px; font-size: 9.5px; font-weight: 600; }
+    .info { display: grid; grid-template-columns: 62px 1fr 52px 1fr; gap: 3px 6px; margin: 8px 0 4px; padding: 7px 8px; background: #FCF7F7; border-radius: 6px; }
+    .info .k { color: var(--ink-soft); }
+    .info .v { font-weight: 600; }
+    h3 { font-size: 11px; color: var(--accent-deep); margin: 10px 0 4px; display: flex; align-items: center; gap: 6px; }
+    h3::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; font-weight: 600; font-size: 9px; color: var(--ink-soft); padding: 3px 5px; border-bottom: 1px solid var(--line); }
+    td { padding: 4px 5px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+    td.num, th.num { text-align: right; white-space: nowrap; }
+    td.kind { color: var(--ink-soft); white-space: nowrap; width: 1%; }
+    td.none { color: var(--ink-soft); text-align: center; }
+    .sub { color: var(--ink-soft); font-size: 9px; }
+    .remarks { border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; min-height: 26px; white-space: pre-wrap; }
+    .sigs { display: flex; gap: 16px; margin-top: 18px; }
+    .sigs div { flex: 1; text-align: center; color: var(--ink-soft); font-size: 9px; }
+    .sigs .dash { border-bottom: 1px dashed var(--ink-soft); height: 22px; margin-bottom: 3px; }
+    .actions { display: flex; justify-content: center; gap: 8px; margin-top: 14px; }
+    .actions button { font-family: inherit; border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 14px; cursor: pointer; }
+    .actions button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .embedded .actions { display: none; }
+    @media print { html, body { background: #fff; padding: 0; } .sheet { box-shadow: none; } .actions { display: none; } }
+    body.capturing { padding: 0; background: #fff; }
+    body.capturing .sheet { box-shadow: none; }
+  </style>
+</head>
+<body>
+  <div class="sheet" id="receipt">
+    <div class="head">
+      <div class="head-left">
+        <? if (d.clinic.logoUrl) { ?><img class="logo" src="<?!= d.clinic.logoUrl ?>" alt="" onerror="this.style.display='none'"><? } ?>
+        <div>
+          <p class="clinic-name"><?= d.clinic.name || 'ARICH CLINIC' ?></p>
+          <p class="meta"><?= d.clinic.address || '' ?></p>
+          <p class="meta"><?= d.clinic.phone ? 'โทร ' + d.clinic.phone : '' ?></p>
+        </div>
+      </div>
+      <div class="title">
+        <p class="t">ใบ OPD<span class="en">OPD SHEET</span></p>
+        <div class="badge"><?= d.rid ?><?= d.queueNo ? ' · คิว ' + d.queueNo : '' ?></div>
+      </div>
+    </div>
+
+    <div class="info">
+      <div class="k">HN</div><div class="v"><?= d.hn || '-' ?></div>
+      <div class="k">วันที่</div><div class="v"><?= d.date ?></div>
+      <div class="k">ชื่อคนไข้</div><div class="v"><?= d.patientName ?><?= d.nickname ? ' (' + d.nickname + ')' : '' ?></div>
+      <div class="k">โทร.</div><div class="v"><?= d.phone || '-' ?></div>
+      <div class="k">เพศ / อายุ</div><div class="v"><?= d.gender || '-' ?><?= d.age !== '' ? ' · ' + d.age + ' ปี' : '' ?></div>
+      <div class="k">วันเกิด</div><div class="v"><?= d.dob || '-' ?></div>
+      <div class="k">ชื่อเซลล์</div><div class="v"><?= d.salesName || '-' ?></div>
+      <div class="k">แพทย์</div><div class="v"><?= d.doctorName || '-' ?></div>
+    </div>
+
+    <h3>รายการยา</h3>
+    <table>
+      <thead><tr><th>ประเภท</th><th>รายการยา</th><th class="num">จำนวน</th><th class="num">จำนวนเงิน</th></tr></thead>
+      <tbody><?!= rowsO_(medRows, 4) ?></tbody>
+    </table>
+
+    <h3>รายการหัตถการ</h3>
+    <table>
+      <thead><tr><th>หัตถการ</th><th>แพทย์</th><th class="num">ค่าบริการ</th></tr></thead>
+      <tbody><?!= rowsO_(procRows, 3) ?></tbody>
+    </table>
+
+    <h3>รายการอื่นๆ</h3>
+    <table>
+      <thead><tr><th>ประเภท</th><th>รายการ</th><th class="num">จำนวนเงิน</th></tr></thead>
+      <tbody><?!= rowsO_(otherRows, 3) ?></tbody>
+    </table>
+
+    <h3>รายละเอียดอื่นๆ</h3>
+    <div class="remarks"><?= d.detail || '' ?></div>
+
+    <div class="sigs">
+      <div><div class="dash"></div>แพทย์ผู้ตรวจ</div>
+      <div><div class="dash"></div>ผู้บันทึก</div>
+    </div>
+
+    <div class="actions">
+      <button onclick="window.close()">ปิด</button>
+      <button onclick="saveReceiptPdf()">บันทึกเป็น PDF</button>
+      <button class="primary" onclick="window.print()">พิมพ์ใบ OPD</button>
+    </div>
+  </div>
+
+  <script>
+    // In the app's preview frame (srcdoc) the toolbar outside calls print / saveReceiptPdf.
+    if (location.protocol === 'about:') document.documentElement.classList.add('embedded');
+    function saveReceiptPdf() {
+      var el = document.getElementById('receipt');
+      var run = function () {
+        document.body.classList.add('capturing');
+        var done = function () { document.body.classList.remove('capturing'); };
+        window.html2pdf().set({
+          margin: 0, filename: 'OPD-<?= d.rid ?>.pdf', image: { type: 'jpeg', quality: 0.96 },
+          html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' }, jsPDF: { unit: 'mm', format: 'a5', orientation: 'portrait' }
+        }).from(el).save().then(done, done);
+      };
+      if (window.html2pdf) { run(); return; }
+      var s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+      s.onload = run;
+      s.onerror = function () { alert('โหลดตัวสร้าง PDF ไม่สำเร็จ — ใช้ปุ่มพิมพ์แล้วเลือก "บันทึกเป็น PDF" แทนได้'); };
+      document.head.appendChild(s);
+    }
+    // A5 is wider than a phone / narrow pane: shrink to fit on screen only.
+    function fitSheet() {
+      var el = document.getElementById('receipt');
+      el.style.zoom = '';
+      var avail = document.documentElement.clientWidth - 36, w = el.offsetWidth;
+      if (w > avail && avail > 200) el.style.zoom = String(avail / w);
+    }
+    window.addEventListener('resize', fitSheet);
+    window.addEventListener('load', fitSheet);
+  </script>
+</body>
+</html>
