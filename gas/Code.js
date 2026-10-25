@@ -5177,12 +5177,19 @@ function seedDemoData(token) {
         appendRow_(getSheet_(CONFIG.SHEETS.DOCTORS), CONFIG.HEADERS.Doctors, { DoctorID: d.id, Name: d.name, Status: 'active', MinAmount: d.minAmount, CreatedAt: nowStr_(), CommissionPct: d.commissionPct });
         return d;
       });
+      // Sale groups (SaleGroups) and the sales people in them; the third has no group.
+      var saleGroups = [{ name: 'ตัวแทน VIP' }, { name: 'ตัวแทนทั่วไป' }].map(function (g) {
+        g.id = 'SG' + nextSeq_('SALE_GROUP', 3);
+        appendRow_(getSheet_(CONFIG.SHEETS.SALE_GROUPS), CONFIG.HEADERS.SaleGroups, { GroupID: g.id, Name: g.name, Status: 'active', CreatedAt: nowStr_(), UpdatedAt: nowStr_() });
+        return g;
+      });
       var sales = [
-        { name: 'คุณอลิสา มั่งมี', commissionRate: 10 },
-        { name: 'คุณกิตติ ขายเก่ง', commissionRate: 8 }
+        { name: 'คุณอลิสา มั่งมี', commissionRate: 10, groupId: saleGroups[0].id },
+        { name: 'คุณกิตติ ขายเก่ง', commissionRate: 8, groupId: saleGroups[1].id },
+        { name: 'คุณมนัส ใจกว้าง', commissionRate: 8, groupId: '' }
       ].map(function (s) {
         s.id = 'SL' + nextSeq_('SALES', 3);
-        appendRow_(getSheet_(CONFIG.SHEETS.SALES), CONFIG.HEADERS.Sales, { SalesID: s.id, Name: s.name, Status: 'active', CommissionRate: s.commissionRate, MinAmount: 0, CreatedAt: nowStr_() });
+        appendRow_(getSheet_(CONFIG.SHEETS.SALES), CONFIG.HEADERS.Sales, { SalesID: s.id, Name: s.name, Status: 'active', CommissionRate: s.commissionRate, MinAmount: 0, CreatedAt: nowStr_(), GroupID: s.groupId });
         return s;
       });
       var promos = [
@@ -5216,9 +5223,33 @@ function seedDemoData(token) {
         { type: 'supply', name: 'สำลีแอลกอฮอล์', category: 'วัสดุสิ้นเปลือง', unit: 'ห่อ', open: 8, min: 10 },
         { type: 'supply', name: 'ผ้าก๊อซปลอดเชื้อ', category: 'วัสดุสิ้นเปลือง', unit: 'ห่อ', open: 0, min: 5 }
       ];
-      stock.forEach(function (s) { s.id = 'ST' + nextSeq_('STOCK', 4); s.qty = 0; });
+      // The same ยา can sit in both stocks (Stock A and Stock B are separate rows).
+      stock.push({ type: 'medicine', name: 'โบท็อกซ์ Dysport 500u', category: 'ยาฉีด', unit: 'ขวด', open: 12, min: 4, cost: 2450, prices: [4400, '', '', '', '', ''], loc: 'B' });
+      var locPlan = ['A', 'A', 'B', 'A', 'B'], locIdx = 0;
+      stock.forEach(function (s) {
+        s.id = 'ST' + nextSeq_('STOCK', 4); s.qty = 0;
+        if (s.type === 'medicine' && !s.loc) s.loc = locPlan[locIdx++] || 'A';
+      });
       var meds = stock.filter(function (s) { return s.type === 'medicine'; });
       var supplies = stock.filter(function (s) { return s.type === 'supply'; });
+      // PriceOverrides: Sale group / Sale agent price tables (the เซลล์'s own table, else the group's, else Standard — used whole).
+      var seedOvr = {};
+      [
+        [meds[0], [{ scope: 'group', targetId: saleGroups[0].id, prices: [4200, 4000, 3800, 3600, 3400, 3200] }, { scope: 'agent', targetId: sales[1].id, prices: [4300, 4100, '', '', '', ''] }]],
+        [meds[1], [{ scope: 'group', targetId: saleGroups[1].id, prices: [8800, 8500, 8200, '', '', ''] }]],
+        [meds[2], [{ scope: 'agent', targetId: sales[0].id, prices: [320, 300, 280, 260, 240, 220] }]]
+      ].forEach(function (p) {
+        saveStockPriceOverrides_({ username: 'admin' }, { ItemID: p[0].id, Name: p[0].name }, p[1]);
+        seedOvr[p[0].id] = p[1].map(function (o) { return { id: '', scope: o.scope, targetId: o.targetId, prices: o.prices.map(function (v) { return v === '' ? null : v; }) }; });
+      });
+      /** ราคาขาย of `qty` units of a seeded ยา for a เซลล์ (or none): {price, source, refId, tier}. */
+      var seedPrice = function (m, salesP, qty) {
+        var rowLike = {};
+        STOCK_PRICE_TIERS.forEach(function (t, k) { rowLike['Price' + t] = m.prices && m.prices[k] !== '' ? m.prices[k] : ''; });
+        var res = resolveItemPrices_(rowLike, seedOvr[m.id] || [], salesP ? { salesId: salesP.id, groupId: salesP.groupId || '' } : {});
+        var pick = pickTier_(res.prices, qty);
+        return { price: pick ? pick.price : 0, source: res.source, refId: res.refId || '', tier: pick ? pick.tier : null };
+      };
 
       // ---- Patients ----
       var patients = [
@@ -5255,19 +5286,27 @@ function seedDemoData(token) {
       // are never restocked so the demo shows ใกล้หมด / หมด items.
       var orderSheet = getSheet_(CONFIG.SHEETS.ORDERS), lineSheet = getSheet_(CONFIG.SHEETS.ORDER_LINES);
       var suppliers = ['บริษัท เมดิคอล ซัพพลาย จำกัด', 'ร้านเวชภัณฑ์ไทย', 'บริษัท บิวตี้ อิมปอร์ต จำกัด'];
+
+      // Even-numbered POs are ซื้อยาจากเซลล์ (ยา in stock, the เซลล์ named; not a clinic expense), odd ones ซื้ออื่นๆ / เวชภัณฑ์ทั่วไป.
       for (var o = 0; o < 5; o++) {
+        var isSalesPo = o % 2 === 0, poSales = isSalesPo ? sales[(o / 2) % sales.length] : null, pool = isSalesPo ? meds : [supplies[0], supplies[1]];
+        var poSupplier = isSalesPo ? poSales.name : suppliers[o % suppliers.length];
         var poDate = dayStr(75 - o * 15), poId = 'PO' + nextSeq_('ORDER', 5), total = 0, poLines = [];
         for (var l = 0; l < 2 + (o % 2); l++) {
-          var it = stock[(o * 2 + l) % 7], q = 10 + l * 5, price = it.cost || (40 + l * 25);
+          var it = pool[(o + l) % pool.length], q = 10 + l * 5, price = it.cost || (40 + l * 25);
           total += q * price;
           poLines.push({ LineID: poId + '-' + (l + 1), PoID: poId, Category: it.category, ItemName: it.name, Qty: q, UnitPrice: price, LineTotal: q * price, ItemID: it.id });
-          move(poDate, it, 'purchase', q, 0, 'จัดซื้อ ' + poId + ' · ' + suppliers[o % suppliers.length]);
+          move(poDate, it, 'purchase', q, 0, 'จัดซื้อ ' + poId + ' · ' + poSupplier);
         }
         // One free-text line (not in stock) to show it doesn't touch stock.
-        if (o === 2) { poLines.push({ LineID: poId + '-9', PoID: poId, Category: 'วัสดุสิ้นเปลือง', ItemName: 'ถุงขยะ', Qty: 5, UnitPrice: 30, LineTotal: 150, ItemID: '' }); total += 150; }
-        appendRow_(orderSheet, CONFIG.HEADERS.Orders, { PoID: poId, Date: poDate, Supplier: suppliers[o % suppliers.length], TotalAmount: total, CreatedBy: actor, CreatedAt: nowStr_(), StockApplied: 'TRUE' });
+        if (o === 3) { poLines.push({ LineID: poId + '-9', PoID: poId, Category: 'วัสดุสิ้นเปลือง', ItemName: 'ถุงขยะ', Qty: 5, UnitPrice: 30, LineTotal: 150, ItemID: '' }); total += 150; }
+        appendRow_(orderSheet, CONFIG.HEADERS.Orders, {
+          PoID: poId, Date: poDate, Supplier: poSupplier, TotalAmount: total, CreatedBy: actor, CreatedAt: nowStr_(), StockApplied: 'TRUE',
+          OrderType: isSalesPo ? 'sales' : 'general', SalesID: poSales ? poSales.id : '', SalesName: poSales ? poSales.name : ''
+        });
         poLines.forEach(function (row) { appendRow_(lineSheet, CONFIG.HEADERS.OrderLines, row); });
       }
+
 
       // Treatment records — 16 days (oldest first), 1-4 records a day. Most start
       // as a จัดยา-เบิกยา (the withdrawal, then หัตถการ / โปร / อื่นๆ added to its
@@ -5284,10 +5323,11 @@ function seedDemoData(token) {
       // ยาฝาก lots expire at different times so the รายการยาฝาก filters have something to show: the second lot already has, the third is about to.
       var lotExpiry = function () { var n = lots.length; return n === 1 ? expiryAfter(-10) : (n === 2 ? expiryAfter(12) : expiryAfter(90 + n * 30)); };
       var addWithdrawal = function (date, patient, salesP, m, q, rid, batch) {
-        var wid = 'WD' + nextSeq_('WITHDRAW', 5);
+        var wid = 'WD' + nextSeq_('WITHDRAW', 5), wsp = seedPrice(m, salesP, q);
         appendRow_(wdSheet, CONFIG.HEADERS.MedWithdrawals, {
           WithdrawID: wid, Date: date, PatientID: patient.id, PatientName: patient.name, Phone: patient.phone,
           SalesID: salesP.id, SalesName: salesP.name, ItemID: m.id, ItemName: m.name, Qty: q, UnitCost: m.cost, Amount: q * m.cost,
+          UnitPrice: wsp.price, SaleAmount: round2_(q * wsp.price),
           Note: '', CreatedBy: actor, CreatedAt: nowStr_(), BatchID: batch,
           RecordID: rid
         });
@@ -5308,7 +5348,8 @@ function seedDemoData(token) {
           // 1 เวชภัณฑ์: supplies used.
           var supplyLines = [];
           if (i % 2 === 0) {
-            var sp = supplies[i % supplies.length];
+            var usable = supplies.filter(function (x) { return x.open > 0; }); // the out-of-stock one (open 0) stays at หมด, never negative
+            var sp = usable[i % usable.length];
             supplyLines.push({ itemId: sp.id, name: sp.name, qty: 1 + (i % 3), unit: sp.unit });
           }
           // 2 หัตถการ: each line names its doctor; every sixth visit has a second one with another doctor.
@@ -5334,9 +5375,11 @@ function seedDemoData(token) {
           }
           var medLines = [];
           if (i % 7 === 3) {
-            var em = meds[(i + 2) % meds.length], eq = 1 + (i % 3), eup = seedTierPrice_(em, eq);
-            medLines.push({ itemId: em.id, name: em.name, qtyDispensed: eq, qtyUsed: eq, qtyDeposit: 0, expiry: '', unitPrice: 0, amount: 0, unitCost: em.cost });
+            var em = meds[(i + 2) % meds.length], eq = 1 + (i % 3), esp = seedPrice(em, salesP, eq);
+            medLines.push({ itemId: em.id, name: em.name, loc: em.loc, qtyDispensed: eq, qtyUsed: eq, qtyDeposit: 0, expiry: '', unitCost: em.cost, unitPrice: esp.price, amount: round2_(eq * esp.price), priceSource: esp.source, priceRefId: esp.refId, tier: esp.tier });
           }
+          // ยาอื่นๆ: not in stock, typed price.
+          if (i % 11 === 5) medLines.push({ other: true, itemId: '', name: 'วิตามินชงดื่ม (ยาอื่นๆ)', qtyDispensed: 1, qtyUsed: 1, qtyDeposit: 0, expiry: '', unitCost: 0, unitPrice: 350, amount: 350, priceSource: 'manual', priceRefId: '', tier: null });
           var depositUse = [];
           if (i % 2 === 1) {
             var lot = lots.filter(function (l) { return l.patient.id === patient.id && l.qty > 0 && l.expiry >= date && l.recordId !== rid; })
@@ -5344,7 +5387,8 @@ function seedDemoData(token) {
             if (lot) { lot.qty = round2_(lot.qty - 1); depositUse.push({ name: lot.name, qty: 1, itemId: lot.itemId, lots: [{ depositId: lot.id, qty: 1 }] }); }
           }
           var ownMed = i % 9 === 4 ? [{ name: 'ยาที่ลูกค้านำมาเอง', qty: 1 }] : [];
-          var messenger = i % 10 === 6 ? [{ name: wdItems.length ? wdItems[0].name : (medLines.length ? medLines[0].name : meds[0].name), qty: 1, note: 'Kerry TH' + (100000 + i) }] : [];
+          var msgItem = (wdItems.length && stock.filter(function (s) { return s.id === wdItems[0].itemId; })[0]) || meds[0];
+          var messenger = i % 10 === 6 ? [{ itemId: msgItem.id, name: msgItem.name, loc: msgItem.loc, qty: 1, note: 'Kerry TH' + (100000 + i) }] : [];
           // 4 รายการอื่นๆ: promo (its doctor is the next one, so those visits pay two doctors) / canula / other.
           var promo = activePromos.length && i % 5 === 0 ? activePromos[i % activePromos.length] : null;
           var promoDoctor = doctors[(i + 1) % doctors.length];
@@ -5365,6 +5409,7 @@ function seedDemoData(token) {
             VisitStatus: draft ? 'dispensed' : 'completed',
             UsePromo: promo ? 'TRUE' : 'FALSE', PromoJSON: JSON.stringify(promoLine ? [promoLine] : []), PromoAmount: promoAmount,
             UseMedicine: medLines.length ? 'TRUE' : 'FALSE', MedicineJSON: JSON.stringify(medLines), MedicineAmount: medicineAmount,
+            MedicineCost: round2_(medLines.reduce(function (sum, x) { return sum + (Number(x.qtyDispensed) || 0) * (Number(x.unitCost) || 0); }, 0)), CanulaNote: useCanula ? 'ใต้ตา' : '',
             UseOther: otherAmount ? 'TRUE' : 'FALSE', OtherItemsJSON: JSON.stringify(otherAmount ? [{ label: 'ค่าบริการอื่นๆ', amount: otherAmount }] : []),
             SupplierPayAmount: round2_(medicineAmount + otherAmount), OpdImageFileId: '',
             UseSupplies: supplyLines.length ? 'TRUE' : 'FALSE',
@@ -5433,7 +5478,8 @@ function seedDemoData(token) {
         var procLines = [{ proc: procs[0], doctor: dA, amount: procs[0].price }, { proc: procs[1], doctor: dB, amount: procs[1].price }];
         var amount = round2_(procLines.reduce(function (sum, l) { return sum + l.amount; }, 0));
         var promo = activePromos[2], promoLine = { promoId: promo.id, name: promo.name, price: promo.price, doctorSharePct: promo.doctorSharePct, amount: promo.price, doctorId: dB.id };
-        var extraLines = [{ itemId: cream.id, name: cream.name, qtyDispensed: 1, qtyUsed: 1, qtyDeposit: 0, expiry: '', unitPrice: 0, amount: 0, unitCost: cream.cost }];
+        var csp = seedPrice(cream, salesP, 1);
+        var extraLines = [{ itemId: cream.id, name: cream.name, loc: cream.loc, qtyDispensed: 1, qtyUsed: 1, qtyDeposit: 0, expiry: '', unitCost: cream.cost, unitPrice: csp.price, amount: csp.price, priceSource: csp.source, priceRefId: csp.refId, tier: csp.tier }];
         var supplyLines = [{ itemId: supplies[0].id, name: supplies[0].name, qty: 2, unit: supplies[0].unit }];
         var salesPct = salesP.commissionRate;
         var row = {
@@ -5443,7 +5489,7 @@ function seedDemoData(token) {
           CreatedBy: actor, CreatedAt: nowStr_(), UpdatedAt: nowStr_(), OtherAmount: 300,
           SalesCommissionPct: salesPct, SalesShare: round2_(amount * salesPct / 100), VisitStatus: 'completed',
           UsePromo: 'TRUE', PromoJSON: JSON.stringify([promoLine]), PromoAmount: promo.price,
-          UseMedicine: 'TRUE', MedicineJSON: JSON.stringify(extraLines), MedicineAmount: extraLines[0].amount,
+          UseMedicine: 'TRUE', MedicineJSON: JSON.stringify(extraLines), MedicineAmount: extraLines[0].amount, MedicineCost: cream.cost, CanulaNote: 'ใต้ตา',
           UseOther: 'TRUE', OtherItemsJSON: JSON.stringify([{ label: 'ค่าบริการอื่นๆ', amount: 300 }]),
           SupplierPayAmount: round2_(extraLines[0].amount + 300), OpdImageFileId: '',
           UseSupplies: 'TRUE', UseOwnMed: 'FALSE', OwnMedJSON: '[]', UseDepositUse: 'FALSE', DepositUseJSON: '[]', UseMessenger: 'FALSE', MessengerJSON: '[]',
@@ -5502,7 +5548,7 @@ function seedDemoData(token) {
       // ---- Write Stock (final Qty), StockLog, MedDeposits ----
       var stockSheet = getSheet_(CONFIG.SHEETS.STOCK);
       stock.forEach(function (s) {
-        var row = { ItemID: s.id, Name: s.name, Category: s.category, Unit: s.unit, Qty: s.qty, CreatedAt: nowStr_(), UpdatedAt: nowStr_(), StockType: s.type, MinQty: s.min, CostPrice: s.cost != null ? s.cost : '' };
+        var row = { ItemID: s.id, Name: s.name, Category: s.category, Unit: s.unit, Qty: s.qty, CreatedAt: nowStr_(), UpdatedAt: nowStr_(), StockType: s.type, StockLoc: s.type === 'medicine' ? s.loc : '', MinQty: s.min, CostPrice: s.cost != null ? s.cost : '' };
         STOCK_PRICE_TIERS.forEach(function (t, k) { row['Price' + t] = s.prices ? s.prices[k] : ''; });
         appendRow_(stockSheet, CONFIG.HEADERS.Stock, row);
       });
