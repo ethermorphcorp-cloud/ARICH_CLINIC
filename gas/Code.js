@@ -3606,6 +3606,12 @@ function saveRecord(token, record) {
       applyDoctorShares_(obj, doctorShares); // DoctorID/DoctorName/shares/ClinicShare
       // A ใบ OPD made by hand waits at รอดำเนินการ (visitFields above); the front moves it on to รอพบแพทย์ / พบแพทย์.
       if (record.complete && visitStatusOf_(obj) !== 'completed') applyVisitStatus_(obj, 'waiting_payment', todayStr_(), false);
+      // "สร้างใบ OPD" (จัดยา-เบิกยา / the รอดำเนินการ card): saving the ใบ OPD moves จัดยาแล้ว / รอดำเนินการ on to
+      // รอพบแพทย์, which takes today's queue number (and today as the date of a record dispensed earlier).
+      if (record.toWaitingDoctor && !isNew) {
+        if (visitStatusOf_(obj) === 'dispensed') obj.VisitStatus = 'pending'; // the profile is there (patient above)
+        if (visitStatusOf_(obj) === 'pending') applyVisitStatus_(obj, 'waiting_doctor', todayStr_(), true);
+      }
       obj.VisitStatus = visitStatusOf_(obj);
       // เสร็จสิ้น (paid) records are edited by an admin only; any edit of a record that already had its treatment
       // saved (รอชำระเงิน once, even if sent back to พบแพทย์) keeps a remark of why.
