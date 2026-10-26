@@ -3344,15 +3344,13 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
    */
   function recordFooter(d) {
     var st = visitStatusKey(d.visitStatus);
-    var receipt = d.id && st !== 'with_doctor' ? '<button class="btn" data-action="issue-receipt" data-arg="' + esc(d.id) + '"><span class="ms">print</span> พิมพ์ใบเสร็จ</button>' : '<span></span>';
-    return '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:18px;gap:8px;flex-wrap:wrap">' + receipt +
+    return '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:18px;gap:8px;flex-wrap:wrap">' + '<span></span>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
         '<button class="btn" data-action="close-modal">ยกเลิก</button>' +
         // With the doctor, adding the treatment IS the step to รอชำระเงิน; afterwards a save just keeps the step.
         (st === 'with_doctor'
           ? '<button class="btn btn-primary" data-action="save-record-complete"><span class="ms">task_alt</span> บันทึกการรักษา → รอชำระเงิน</button>'
-          : '<button class="btn' + (st === 'waiting_payment' ? '' : ' btn-primary') + '" data-action="save-modal">บันทึก</button>' +
-            (st === 'waiting_payment' ? '<button class="btn btn-primary" data-action="save-record-pay"><span class="ms">payments</span> บันทึกและชำระเงิน</button>' : '')) +
+          : '<button class="btn btn-primary" data-action="save-modal">บันทึก</button>') +
       '</div>' +
     '</div>';
   }
