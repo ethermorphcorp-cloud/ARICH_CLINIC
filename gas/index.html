@@ -445,9 +445,87 @@ input:focus,select:focus,textarea:focus{border-color:rgba(156,88,98,.5) !importa
 
 /* login: glass card over the same light field */
 .login-shell{background:transparent !important}
+
+/* ===================== Phone (≤ 720px) =====================
+   A viewing app: no sidebar; a floating glass tab bar with ภาพรวม / คิว / คนไข้ / สต๊อก / รายงาน; lists as
+   cards; dialogs as bottom sheets; side panels full width. */
+.m-tabbar,.m-scrim,.m-only{display:none}
+@media (max-width:720px){
+  .app-shell{display:block}
+  .sidebar{display:none !important}
+  .m-only{display:inline-flex}
+  .m-tabbar{display:flex;position:fixed;z-index:50;left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom));
+    padding:6px;border-radius:24px;background:rgba(255,255,255,.72);-webkit-backdrop-filter:blur(20px) saturate(170%);backdrop-filter:blur(20px) saturate(170%);
+    border:1px solid rgba(255,255,255,.8);box-shadow:0 10px 34px rgba(122,62,74,.16)}
+  .m-tab{flex:1;min-width:0;position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;padding:7px 2px 6px;border:none;background:none;border-radius:18px;
+    font:inherit;font-size:11px;font-weight:500;color:#8A747B;cursor:pointer}
+  .m-tab .ms{font-size:22px}
+  .m-tab.active{background:rgba(255,255,255,.95);color:var(--accent);box-shadow:0 3px 10px rgba(156,88,98,.14)}
+  .m-dot{position:absolute;top:6px;right:calc(50% - 16px);width:8px;height:8px;border-radius:50%;background:var(--red);box-shadow:0 0 0 2px #fff}
+
+  .header{padding:14px 16px 12px !important;gap:10px}
+  .page-title{font-size:21px !important}
+  .page-sub{display:none}
+  .header .header-chip{display:none}
+  .header .btn{padding:8px 10px !important}
+  .content{padding:14px 12px 104px !important;gap:12px !important}
+  .card{border-radius:18px}
+
+  .modal-backdrop{align-items:flex-end !important;padding:0 !important}
+  .modal-backdrop .modal{max-width:100% !important;max-height:92dvh !important;border-radius:26px 26px 0 0 !important;padding:18px 16px 26px !important;animation:sheet-up .26s cubic-bezier(.2,.8,.2,1)}
+  .side-panel,.side-panel.side-panel-wide{width:100% !important;max-width:100% !important;border-radius:0 !important}
+}
+/* phone view parts */
+.m-row{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+.m-row .search-input-wrap{flex:1}
+.m-select{flex:1;min-width:0;height:42px;padding:0 12px;border:1px solid var(--glass-edge,var(--input-border));border-radius:14px;background:rgba(255,255,255,.7);font:inherit;font-size:14px;color:var(--text)}
+.m-to{color:var(--muted);font-size:13px}
+.m-empty{padding:28px 16px;text-align:center;color:var(--muted);font-size:13.5px}
+.m-kpis{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.m-kpi{padding:14px;border-radius:20px;display:flex;flex-direction:column;gap:2px}
+.m-kpi .ms{width:34px;height:34px;border-radius:12px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:19px;margin-bottom:6px}
+.m-kpi .lb{font-size:12.5px;color:var(--muted)}
+.m-kpi .vl{font-size:19px;font-weight:700;letter-spacing:-.01em;white-space:nowrap}
+.m-kpi .sb{font-size:11.5px;color:var(--muted);font-weight:600}
+.m-seg{display:flex;padding:4px;margin-bottom:12px;border-radius:16px;background:rgba(255,255,255,.45);border:1px solid var(--glass-edge,var(--border))}
+.m-seg button{flex:1;border:none;background:none;padding:9px 6px;border-radius:12px;font:inherit;font-size:13px;font-weight:500;color:var(--text-2);cursor:pointer}
+.m-seg button.on{background:rgba(255,255,255,.95);color:var(--accent);box-shadow:0 3px 10px rgba(156,88,98,.12)}
+.m-list{display:flex;flex-direction:column;gap:8px}
+.m-item{display:flex;align-items:center;gap:12px;width:100%;padding:12px 14px;text-align:left;font:inherit;color:var(--text);cursor:pointer}
+div.m-item{cursor:default}
+.m-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.m-main b{font-size:14.5px;font-weight:600}
+.m-sub{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.m-muted{color:var(--muted);font-weight:400}
+.m-tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:3px}
+.m-avatar{width:40px;height:40px;flex:none;border-radius:14px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px}
+.m-chev{color:var(--muted);font-size:20px}
+.m-queue{align-items:flex-start}
+.m-q{width:42px;height:42px;flex:none;border-radius:14px;background:var(--accent);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:700;font-size:16px;line-height:1}
+.m-q small{font-size:9px;font-weight:500;opacity:.85}
+.m-q-none{background:var(--accent-soft);color:var(--accent)}
+.m-amt{font-weight:700;font-size:13.5px;white-space:nowrap}
+.m-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
+.m-stat{padding:10px 12px;border-radius:16px}
+.m-stat .lb{font-size:11.5px;color:var(--muted)}
+.m-stat .vl{font-size:20px;font-weight:700}
+.m-stat.warn .vl{color:var(--amber-dark)}
+.m-stat.bad .vl{color:var(--red-dark)}
+.m-qty{display:flex;flex-direction:column;align-items:flex-end;text-align:right;flex:none}
+.m-qty b{font-size:20px;font-weight:700;line-height:1.1}
+.m-qty small{font-size:11px;color:var(--muted)}
+.m-wide{width:100%;justify-content:center;padding:12px !important;margin-bottom:12px;border-radius:16px !important}
+.m-block{padding:14px;border-radius:20px}
+.m-block-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
+.m-block-head b{font-size:15px}
+.m-block-head .btn{padding:6px 10px !important;font-size:12.5px}
+.m-line{display:flex;flex-direction:column;padding:6px 0;border-top:1px dashed var(--border);font-size:13px}
+.m-line .m-muted{font-size:12px}
+.m-sum{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px;color:var(--muted)}
+.m-sum b{color:var(--text)}
+@keyframes sheet-up{from{transform:translateY(40px);opacity:.4}to{transform:none;opacity:1}}
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms !important;transition-duration:.01ms !important}}
-@media (max-width:1000px){.sidebar{width:72px;margin:8px 0 8px 8px;height:calc(100vh - 16px);top:8px;padding:14px 8px;border-radius:20px}.sidebar .brand img{width:44px !important;height:44px !important;border-radius:12px !important}}
-@media (max-width:720px){.header{padding:14px !important}.page-title{font-size:19px !important}.content{padding:16px 14px 40px !important}}
+@media (min-width:721px) and (max-width:1000px){.sidebar{width:72px;margin:8px 0 8px 8px;height:calc(100vh - 16px);top:8px;padding:14px 8px;border-radius:20px}.sidebar .brand img{width:44px !important;height:44px !important;border-radius:12px !important}}
 </style>
 </head>
 <body>
@@ -861,9 +939,16 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         '<span class="ms">' + n.icon + '</span><span>' + esc(n.label) + '</span>' + badge + '</button>';
     }).join('');
     var currentNav = NAV.filter(function (n) { return n.id === state.screen; })[0] || NAV[0];
+    // Phone only (CSS hides it on wider screens): the phone is for looking things up, so it has just the
+    // five viewing screens (see MOBILE_TABS) as a bottom tab bar.
+    var tabBar = '<nav class="m-tabbar" aria-label="เมนูหลัก">' + mobileTabs().map(function (t) {
+      var n = NAV.filter(function (x) { return x.id === t.id; })[0];
+      var dot = t.id === 'board' && state.notify.unseen > 0 ? '<i class="m-dot"></i>' : '';
+      return '<button class="m-tab' + (state.screen === t.id ? ' active' : '') + '" data-action="nav" data-arg="' + t.id + '"><span class="ms">' + n.icon + '</span>' + dot + '<span>' + t.label + '</span></button>';
+    }).join('') + '</nav>';
 
     return '' +
-      '<div class="app-shell">' +
+      '<div class="app-shell' + (state.mobileNav ? ' m-nav-open' : '') + '">' +
         '<aside class="sidebar">' +
           '<div class="brand" style="flex-direction:column;align-items:center;text-align:center;gap:10px;padding:18px 8px 14px">' + (state.master && state.master.logoUrl
             ? '<img src="' + esc(state.master.logoUrl) + '" style="width:156px;height:156px;object-fit:cover;border-radius:39px;flex:none">'
@@ -881,14 +966,16 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         '</aside>' +
         '<main class="main">' +
           '<header class="header" style="display:flex;justify-content:space-between;align-items:center;padding:18px 26px;border-bottom:1px solid var(--border)">' +
-            '<div><div class="page-title" style="font-size:18px;font-weight:700">' + esc(currentNav.label) + '</div><div class="page-sub" style="font-size:12.5px;color:var(--muted)">' + esc(currentNav.sub) + '</div></div>' +
+            '<div><div class="page-title" style="font-size:18px;font-weight:700">' + esc(isMobileView() ? (mobileTabs().filter(function (t) { return t.id === state.screen; })[0] || currentNav).label : currentNav.label) + '</div><div class="page-sub" style="font-size:12.5px;color:var(--muted)">' + esc(currentNav.sub) + '</div></div>' +
             '<div style="display:flex;align-items:center;gap:8px">' +
               '<button class="btn" data-action="refresh-screen" title="โหลดข้อมูลหน้านี้ใหม่" style="padding:7px 12px;font-size:12.5px"><span class="ms" style="font-size:17px">refresh</span> รีเฟรช</button>' +
+              '<button class="btn m-only" data-action="logout" title="ออกจากระบบ" style="padding:7px 9px"><span class="ms" style="font-size:18px">logout</span></button>' +
               '<div class="header-chip" style="font-size:12px;color:var(--muted)">' + esc(todayStr()) + '</div>' +
             '</div>' +
           '</header>' +
           '<div class="content" style="padding:22px 26px 60px">' + screenBody() + '</div>' +
         '</main>' +
+        '<div class="m-scrim" data-action="mobile-nav"></div>' + tabBar +
       '</div>' +
       modalTemplate();
       // Note: patient/record/day side panels are NOT concatenated here —
@@ -898,6 +985,15 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   }
 
   function screenBody() {
+    if (isMobileView()) {
+      switch (state.screen) {
+        case 'dash': return mDashTemplate();
+        case 'patients': return mPatientsTemplate();
+        case 'board': return mBoardTemplate();
+        case 'stock': return mStockTemplate();
+        case 'reports': return mReportTemplate();
+      }
+    }
     switch (state.screen) {
       case 'dash': return dashTemplate();
       case 'patients': return patientsTemplate();
@@ -912,6 +1008,136 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       case 'settings': return settingsTemplate();
       default: return '<div class="empty-state">ไม่พบหน้านี้</div>';
     }
+  }
+
+  /* ================================================================== */
+  /* Phone views — read only                                              */
+  /* ================================================================== */
+  function mSelect(action, value, opts, id) {
+    return '<select' + (id ? ' id="' + id + '"' : '') + ' class="m-select" data-action-change="' + action + '">' + opts.map(function (o) {
+      return '<option value="' + esc(o.value) + '"' + (String(o.value) === String(value) ? ' selected' : '') + '>' + esc(o.label) + '</option>';
+    }).join('') + '</select>';
+  }
+  function mSeg(action, value, opts) {
+    return '<div class="m-seg">' + opts.map(function (o) {
+      return '<button class="' + (o.value === value ? 'on' : '') + '" data-action="' + action + '" data-arg="' + esc(o.value) + '">' + esc(o.label) + '</button>';
+    }).join('') + '</div>';
+  }
+  function mLoading() { return '<div class="card m-empty"><span class="spin"></span> กำลังโหลด...</div>'; }
+
+  /** ภาพรวม: the four headline numbers, then รายได้ / รายจ่าย by category on two tabs. */
+  function mDashTemplate() {
+    var D = state.dash.data;
+    var range = '<div class="m-row">' +
+      '<input type="date" id="dashFrom" value="' + esc(state.dash.from) + '" class="m-select" data-action-change="dash-range">' +
+      '<span class="m-to">ถึง</span>' +
+      '<input type="date" id="dashTo" value="' + esc(state.dash.to) + '" class="m-select" data-action-change="dash-range"></div>';
+    if (!D) return range + mLoading();
+    var s = D.stats, tab = state.dash.mTab || 'rev';
+    var kpi = function (icon, label, value, sub) {
+      return '<div class="card m-kpi"><span class="ms">' + icon + '</span><div class="lb">' + esc(label) + '</div><div class="vl">' + value + '</div>' + (sub ? '<div class="sb">' + sub + '</div>' : '') + '</div>';
+    };
+    var rows = tab === 'rev' ? D.revenueByType : D.expenseByCategory;
+    return range +
+      '<div class="m-kpis">' +
+        kpi('payments', 'รายได้รวม', money(s.totalRevenue)) +
+        kpi('receipt_long', 'ค่าใช้จ่ายรวม', money(s.totalExpense)) +
+        kpi('trending_up', 'กำไรสุทธิ', money(s.profit), 'กำไร ' + pctLabel(s.profitPct)) +
+        kpi('groups', 'จำนวนคนไข้', num(s.customerCount) + ' ราย') +
+      '</div>' +
+      mSeg('m-dash-tab', tab, [{ value: 'rev', label: 'รายได้รายหมวดหมู่' }, { value: 'exp', label: 'รายจ่ายรายหมวดหมู่' }]) +
+      barChart(tab === 'rev' ? 'รายได้รายหมวดหมู่' : 'รายจ่ายรายหมวดหมู่', (rows || []).map(function (r) { return { label: r.label, v: r.value }; }));
+  }
+
+  /** คนไข้: search and the list; a tap opens the profile. */
+  function mPatientsTemplate() {
+    var L = state.patients.list;
+    var list = !L ? mLoading() : (!L.items.length ? '<div class="card m-empty">ไม่พบข้อมูลคนไข้</div>' :
+      '<div class="m-list">' + L.items.map(function (p) {
+        var initials = ((p.firstName || '?').charAt(0) + (p.lastName || '').charAt(0)).toUpperCase();
+        return '<button class="card m-item" data-action="view-patient" data-arg="' + esc(p.id) + '">' +
+          '<span class="m-avatar">' + esc(initials) + '</span>' +
+          '<span class="m-main"><b>' + esc(p.firstName + ' ' + p.lastName) + (p.nickname ? ' <span class="m-muted">(' + esc(p.nickname) + ')</span>' : '') + '</b>' +
+          '<span class="m-sub">' + (p.hn ? 'HN ' + esc(p.hn) + ' · ' : '') + esc(p.phone || '-') + '</span></span>' +
+          '<span class="ms m-chev">chevron_right</span></button>';
+      }).join('') + '</div>');
+    return '<div class="m-row">' + searchScopeBoxHtml('patients', '100%') + '</div>' + list + (L ? pagerHtml(L, 'patients-page') : '');
+  }
+
+  /** คิว: one status at a time (with its count), its customers as plain cards. */
+  function mBoardTemplate() {
+    var B = state.board, d = B.data;
+    if (!B.date) B.date = todayStr();
+    var st = B.mStatus || 'pending';
+    var head = '<div class="m-row">' +
+      '<input type="date" id="boardDate" value="' + esc(B.date) + '" class="m-select" style="flex:0 0 150px" data-action-change="board-date">' +
+      (d ? mSelect('m-board-status', st, VISIT_FLOW.map(function (k) { return { value: k, label: VISIT_STATUS_LABEL[k] + ' (' + (d.counts[k] || 0) + ')' }; })) : '') + '</div>';
+    if (!d) return head + mLoading();
+    var cards = d.columns[st] || [];
+    return head + (!cards.length ? '<div class="card m-empty">ไม่มีคนไข้ในสถานะนี้</div>' : '<div class="m-list">' + cards.map(function (c) {
+      var q = st === 'pending' ? null : c.queueDoctor;
+      var tags = (c.carryover ? '<span class="tag-badge" style="background:var(--red-soft)">ค้างจาก ' + esc(c.queueDate || c.date) + '</span>' : '') +
+        ((st === 'pending' || st === 'waiting_doctor') && !c.opdCreated ? '<span class="tag-badge" style="background:var(--amber-soft)">ยังไม่มีใบ OPD</span>' : '');
+      return '<button class="card m-item m-queue" data-action="view-record" data-arg="' + esc(c.id) + '">' +
+        (q ? '<span class="m-q"><small>คิว</small>' + esc(q) + '</span>' : '<span class="m-q m-q-none"><span class="ms">schedule</span></span>') +
+        '<span class="m-main"><b>' + esc(c.patientName) + '</b>' +
+          '<span class="m-sub">' + (c.hn ? 'HN ' + esc(c.hn) + ' · ' : '') + esc(c.phone || '') + '</span>' +
+          (c.items.length ? '<span class="m-sub">' + c.items.map(esc).join(', ') + (c.moreItems ? ' +' + c.moreItems : '') + '</span>' : '') +
+          '<span class="m-sub">' + (c.visitDoctorName ? 'แพทย์ ' + esc(c.visitDoctorName) + ' · ' : (c.doctors.length ? 'แพทย์ ' + c.doctors.map(esc).join(', ') + ' · ' : '')) + (c.salesName ? 'เซลล์ ' + esc(c.salesName) : '') + '</span>' +
+          (tags ? '<span class="m-tags">' + tags + '</span>' : '') +
+        '</span>' +
+        (c.total != null ? '<span class="m-amt">' + money(c.total) + '</span>' : '') + '</button>';
+    }).join('') + '</div>');
+  }
+
+  /** สต๊อก: which stock, three small counts, then each item's คงเหลือ. */
+  function mStockTemplate() {
+    var L = state.stock.list, isMed = state.stock.type === 'medicine', sum = (L && L.summary) || null;
+    var tabOpts = [{ value: 'supply', label: 'รายการเวชภัณฑ์' }, { value: 'medicine:A', label: 'รายการยา ' + stockName('A') }, { value: 'medicine:B', label: 'รายการยา ' + stockName('B') }];
+    var stat = function (label, n, tone) { return '<div class="card m-stat ' + (tone || '') + '"><div class="lb">' + label + '</div><div class="vl">' + (sum ? esc(n) : '–') + '</div></div>'; };
+    var list = !L ? mLoading() : (!L.items.length ? '<div class="card m-empty">ไม่พบรายการ</div>' : '<div class="m-list">' + L.items.map(function (s) {
+      var qty = s.latestQtyRemaining != null ? s.latestQtyRemaining : s.qty;
+      var low = s.minQty != null ? qty <= s.minQty : qty <= 10;
+      var badge = qty <= 0 ? '<span class="tag-badge" style="background:var(--red-soft);color:var(--red-dark)">' + (qty < 0 ? 'ติดลบ' : 'หมด') + '</span>' : (low ? '<span class="tag-badge" style="background:var(--amber-soft);color:var(--amber-dark)">ใกล้หมด</span>' : '');
+      return '<div class="card m-item">' +
+        '<span class="m-main"><b>' + esc(s.name) + '</b>' +
+          '<span class="m-sub">' + esc(s.category || '-') + (s.minQty != null ? ' · ขั้นต่ำ ' + esc(s.minQty) : '') + (s.latestDate ? ' · อัพเดต ' + esc(s.latestDate) : '') + '</span>' +
+          (badge ? '<span class="m-tags">' + badge + '</span>' : '') + '</span>' +
+        '<span class="m-qty"><b style="color:' + (qty <= 0 ? 'var(--red-dark)' : low ? 'var(--amber-dark)' : 'var(--text)') + '">' + esc(Number(qty).toLocaleString('en-US')) + '</b><small>' + esc(s.unit || '') + (isMed ? ' พร้อมใช้' : '') + '</small>' +
+          (isMed && s.depositQty ? '<small>ฝาก ' + esc(s.depositQty) + '</small>' : '') + '</span></div>';
+    }).join('') + '</div>');
+    return '<div class="m-row">' + mSelect('m-stock-tab', stockTabId(), tabOpts) + '</div>' +
+      '<div class="m-stats">' + stat('ทั้งหมด', sum && sum.total) + stat('ใกล้หมด', sum && sum.low, 'warn') + stat('หมดแล้ว', sum && sum.out, 'bad') + '</div>' +
+      '<div class="m-row">' + searchScopeBoxHtml('stock', '100%') + '</div>' + list + (L ? pagerHtml(L, 'stock-page') : '');
+  }
+
+  /** รายงาน: รายงานรายเซลล์ of one day (today first), per เซลล์, each downloadable as PDF. */
+  function mReportTemplate() {
+    var rp = state.report, D = rp.data && rp.dataTab === 'sales' ? rp.data : null;
+    var salesOpts = [{ value: '', label: 'ทุกเซลล์' }].concat((state.master.sales || []).map(function (x) { return { value: x.id, label: x.name }; }));
+    var head = '<div class="m-row">' +
+      '<input type="date" value="' + esc(rp.mDate || todayStr()) + '" class="m-select" style="flex:0 0 150px" data-action-change="m-rp-date">' +
+      mSelect('m-rp-sales', rp.salesId, salesOpts, 'rpSales') + '</div>' +
+      mSeg('report-view', rp.view === 'sales' ? 'sales' : 'all', [{ value: 'sales', label: 'Report เซลล์' }, { value: 'all', label: 'Report รวม' }]);
+    if (rp.loading || !D) return head + mLoading();
+    var blocks = salesPivotBlocks(D.rows);
+    if (!blocks.length) return head + '<div class="card m-empty">ไม่มีรายการของวันที่ ' + esc(rp.mDate || '') + '</div>';
+    var all = rp.view !== 'sales';
+    return head +
+      '<button class="btn btn-primary m-wide" data-action="m-rp-pdf"><span class="ms">download</span> ดาวน์โหลด PDF ' + (rp.salesId ? 'ของเซลล์นี้' : 'ทุกเซลล์') + '</button>' +
+      '<div class="m-list">' + blocks.map(function (b) {
+        var lines = b.patients.map(function (p) {
+          return '<div class="m-line"><span>' + esc(p.name) + '</span><span class="m-muted">' + p.rows.map(function (r) { return esc(stockLabelById(r.itemId, r.itemName)) + ' ×' + esc(r.qty); }).join(', ') + '</span></div>';
+        }).join('');
+        return '<div class="card m-block">' +
+          '<div class="m-block-head"><b>' + esc(b.salesName) + '</b>' +
+            '<button class="btn" data-action="m-rp-pdf" data-arg="' + esc(b.key) + '"><span class="ms">picture_as_pdf</span> PDF</button></div>' +
+          lines +
+          '<div class="m-sum"><span>ราคาทุน <b>' + money(b.cost) + '</b></span><span>ราคาขายเซลล์ <b>' + money(b.sale) + '</b></span>' +
+            (b.customer ? '<span>คืนเซลล์ <b style="color:var(--red-dark)">' + money(b.refund) + '</b></span>' : '') +
+            (all ? '<span>ส่วนต่างสุทธิ <b style="color:var(--green-dark)">' + money(b.margin) + '</b></span>' : '') + '</div>' +
+        '</div>';
+      }).join('') + '</div>';
   }
 
   /* ---------------------------------------------------------------- */
@@ -981,7 +1207,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       relabelStockCache();
       render();
       pollQueueAlerts();
-      if (state.screen === 'dash') loadDash();
+      if (isMobileView()) goNav(mobileDefaultScreen());
+      else if (state.screen === 'dash') loadDash();
       // Clinic logo (Settings > ข้อมูลบริษัท) shows in the sidebar brand
       // mark once fetched — fire-and-render separately so it never blocks
       // the rest of the app from painting.
@@ -1057,7 +1284,31 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     pollQueueAlerts();
     toast('success', 'รีเฟรชข้อมูลแล้ว');
   }
+  /* ---- Phone (≤ 720px): a viewing app — ภาพรวม / คิว / คนไข้ / สต๊อก / รายงาน, no actions. ---- */
+  var MOBILE_TABS = [{ id: 'dash', label: 'ภาพรวม' }, { id: 'board', label: 'คิว' }, { id: 'patients', label: 'คนไข้' }, { id: 'stock', label: 'สต๊อก' }, { id: 'reports', label: 'รายงาน' }];
+  var mobileMq = window.matchMedia ? window.matchMedia('(max-width:720px)') : null;
+  function isMobileView() { return !!(mobileMq && mobileMq.matches); }
+  function mobileTabs() { return MOBILE_TABS.filter(function (t) { return allowedNav().some(function (n) { return n.id === t.id; }); }); }
+  function mobileDefaultScreen() { var tabs = mobileTabs(); return tabs.some(function (t) { return t.id === 'board'; }) ? 'board' : (tabs[0] || {}).id; }
+  /** Crossing the phone breakpoint: a screen the phone does not have moves to the queue. */
+  function onViewportChange() {
+    if (!session.token || state.screen === 'login') return;
+    if (isMobileView() && !mobileTabs().some(function (t) { return t.id === state.screen; })) goNav(mobileDefaultScreen());
+    else if (isMobileView() && state.screen === 'reports') goNav('reports');
+    else render();
+  }
+  if (mobileMq) { if (mobileMq.addEventListener) mobileMq.addEventListener('change', onViewportChange); else if (mobileMq.addListener) mobileMq.addListener(onViewportChange); }
+
   function goNav(screenId) {
+    // On a phone, รายงาน is the day's รายงานรายเซลล์ (one date, today first) and สต๊อก the three stock lists.
+    if (isMobileView()) {
+      if (screenId === 'reports') {
+        var mrp = state.report;
+        if (!mrp.mDate) { mrp.mDate = todayStr(); mrp.view = 'sales'; }
+        mrp.tab = 'sales'; mrp.from = mrp.to = mrp.mDate;
+      }
+      if (screenId === 'stock' && (state.stock.type === 'procedure' || state.stock.type === 'summary')) { state.stock.type = 'supply'; state.stock.list = null; }
+    }
     // Round 18 item 2: defensive guard — the sidebar never renders a button
     // for an adminOnly screen to a staff session (see allowedNav()), so this
     // should be unreachable in normal use, but refusing it here too means a
@@ -1082,6 +1333,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     if (screenId === 'expense' && !state.expense.list) loadExpenses();
     if (screenId === 'promotions' && !state.promotions.list) loadPromotions();
     if (screenId === 'settings') loadSettingsTabData(state.settings.tab);
+    if (screenId === 'reports' && isMobileView()) runReport();
   }
 
   /* ---------------------------------------------------------------- */
@@ -5196,7 +5448,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
    * PDF because Chrome often blocks its PDF viewer inside the sandboxed Apps
    * Script frame.
    */
-  function openReportPdfPreview(blockKey) {
+  function openReportPdfPreview(blockKey, direct) {
     var rp = state.report, D = rp.data, scope = null;
     if (!D || !D.rows.length) return;
     var salesName = rp.salesId ? ((state.master.sales || []).filter(function (s) { return s.id === rp.salesId; })[0] || {}).name || '' : 'ทุกเซลล์';
@@ -5215,7 +5467,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     ensureClinicLogo().then(function () {
       setLoading(false);
       rp.preview = { kind: rp.dataTab, data: D, filename: filename, scope: scope };
-      renderPdfPreview();
+      if (direct) downloadReportPdf(); else renderPdfPreview();
     });
   }
   var pdfPreviewEl = document.getElementById('pdfPreviewRoot');
@@ -6224,6 +6476,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
 
     switch (action) {
       case 'nav': goNav(arg); break;
+      case 'm-dash-tab': state.dash.mTab = arg; render(); break;
+      case 'm-rp-pdf': openReportPdfPreview(arg || null, true); break;
       case 'refresh-screen': refreshScreen(); break;
       case 'toggle-login-password': {
         var pwInput = document.getElementById('loginPassword');
@@ -6465,6 +6719,10 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     var el = ev.target.closest('[data-action-change]');
     if (el && el.getAttribute('data-action-change') === 'dash-range') onDashRangeChange();
     if (el && el.getAttribute('data-action-change') === 'sales-group') changeSalesGroup(el.getAttribute('data-arg'), el.value);
+    if (el && el.getAttribute('data-action-change') === 'm-board-status') { state.board.mStatus = el.value; render(); }
+    if (el && el.getAttribute('data-action-change') === 'm-stock-tab') stockTab(el.value);
+    if (el && el.getAttribute('data-action-change') === 'm-rp-date') { var mr = state.report; mr.mDate = el.value || todayStr(); mr.from = mr.to = mr.mDate; runReport(); }
+    if (el && el.getAttribute('data-action-change') === 'm-rp-sales') { state.report.salesId = el.value; runReport(); }
     if (el && el.getAttribute('data-action-change') === 'sum-stock') { state.stock.sum.stock = el.value; state.stock.sum.page = 1; render(); }
     if (el && el.getAttribute('data-action-change') === 'sum-cat') { state.stock.sum.category = el.value; state.stock.sum.page = 1; render(); }
     if (el && el.getAttribute('data-action-change') === 'sum-from') onStockSumRange('from', el.value);
