@@ -3086,6 +3086,9 @@ function medicineLines_(record, ctx) {
     } else {
       o.priceSource = 'manual'; o.priceRefId = ''; o.tier = null;
     }
+    // ราคาขาย of the เซลล์ (their price table, for this qty) — the รายงานรายเซลล์ pays the เซลล์ back what the
+    // customer was charged above it (ส่วนต่างคืนเซลล์).
+    o.salePrice = oldLine && Number(oldLine.unitPrice) === unitPrice && oldLine.salePrice != null ? Number(oldLine.salePrice) : (pick ? pick.price : null);
     out.items.push(o);
     out.total += o.amount;
     out.cost += o.qtyDispensed * o.unitCost;
@@ -4401,11 +4404,17 @@ function salesReportRows_(keep) {
       var p = unitPriceForQty_(resolveItemPrices_(item, ovrByItem[itemId], salesWho_(salesById[salesId])).prices, qty);
       return p == null ? 0 : p;
     };
+    // ราคาขาย = the เซลล์'s price; ส่วนต่างสุทธิ = ราคาขาย − ราคาทุน. A ซื้อยาเพิ่ม the clinic charged the customer for
+    // (customerPrice) also has ส่วนต่างคืนเซลล์ = ราคาลูกค้าจ่าย − ราคาขาย, which goes back to the เซลล์.
     var push = function (o) {
       o.unit = (stockById[o.itemId] || {}).Unit || '';
       o.costAmount = round2_(o.qty * o.unitCost);
       o.saleAmount = round2_(o.qty * o.unitPrice);
       o.margin = round2_(o.saleAmount - o.costAmount);
+      o.customerAmount = o.customerPrice == null ? null : round2_(o.qty * o.customerPrice);
+      o.refund = o.customerAmount == null ? 0 : round2_(o.customerAmount - o.saleAmount);
+      // What the clinic itself takes in for the ยา (dashboard): the customer's money when it charged them, else ราคาขาย.
+      o.clinicAmount = o.customerAmount == null ? o.saleAmount : o.customerAmount;
       out.push(o);
     };
     getRows_(getSheet_(CONFIG.SHEETS.MED_WITHDRAWALS)).forEach(function (w) {
@@ -4427,7 +4436,9 @@ function salesReportRows_(keep) {
         push({
           date: d, sortKey: String(r.CreatedAt), patientName: r.PatientName, salesId: r.SalesID || '', salesName: r.SalesName || '', itemId: l.itemId, itemName: l.name,
           qty: Number(l.qtyDispensed) || 0, unitCost: l.unitCost != null ? Number(l.unitCost) || 0 : Number(s.CostPrice) || 0,
-          unitPrice: Number(l.unitPrice) || 0,
+          // ราคาขาย of the เซลล์ (kept on the line; older lines: their price now, or what was charged when none)
+          unitPrice: l.salePrice != null && l.salePrice !== '' ? Number(l.salePrice) || 0 : (priceNow(l.itemId, r.SalesID, Number(l.qtyDispensed) || 0) || Number(l.unitPrice) || 0),
+          customerPrice: Number(l.unitPrice) || 0,
           // คลินิกเก็บเงินลูกค้าเอง (ยอดรับชำระของ OPD) — not part of what the clinic collects from the เซลล์.
           remark: 'ซื้อยาเพิ่ม · คลินิกเก็บเงิน (OPD ' + r.RID + ')', clinicCharged: true
         });
@@ -4454,15 +4465,17 @@ function getSalesReport(token, opts) {
     var bySales = {}, order = [];
     out.forEach(function (o) {
       var key = o.salesId || o.salesName || '-';
-      if (!bySales[key]) { bySales[key] = { salesId: o.salesId, salesName: o.salesName || '-', qty: 0, cost: 0, sale: 0, margin: 0 }; order.push(key); }
+      if (!bySales[key]) { bySales[key] = { salesId: o.salesId, salesName: o.salesName || '-', qty: 0, cost: 0, sale: 0, customer: 0, margin: 0, refund: 0 }; order.push(key); }
       var b = bySales[key];
       b.qty = round2_(b.qty + o.qty);
       b.cost = round2_(b.cost + o.costAmount);
       b.sale = round2_(b.sale + o.saleAmount);
+      b.customer = round2_(b.customer + (o.customerAmount || 0));
       b.margin = round2_(b.margin + o.margin);
+      b.refund = round2_(b.refund + o.refund);
     });
     var sum = function (k) { return round2_(out.reduce(function (s, o) { return s + o[k]; }, 0)); };
-    return { ok: true, data: { rows: out, bySales: order.map(function (k) { return bySales[k]; }), totalQty: sum('qty'), totalCost: sum('costAmount'), totalSale: sum('saleAmount'), totalMargin: sum('margin') } };
+    return { ok: true, data: { rows: out, bySales: order.map(function (k) { return bySales[k]; }), totalQty: sum('qty'), totalCost: sum('costAmount'), totalSale: sum('saleAmount'), totalCustomer: round2_(out.reduce(function (s, o) { return s + (o.customerAmount || 0); }, 0)), totalRefund: sum('refund'), totalMargin: sum('margin') } };
   });
 }
 
@@ -4802,7 +4815,7 @@ function getDashboardData(token, opts) {
     var customerRevenue = periodRecords.reduce(function (s, r) { return s + recordTotalCollected_(r); }, 0);
     var medicinePurchased = periodRecords.reduce(function (s, r) { return s + (Number(r.MedicineAmount) || 0); }, 0);
     var clinicRevenue = round2_(customerRevenue - medicinePurchased);
-    var medRevenue = round2_(periodMedRows.reduce(function (s, o) { return s + o.saleAmount; }, 0));
+    var medRevenue = round2_(periodMedRows.reduce(function (s, o) { return s + o.clinicAmount; }, 0));
     var medCost = round2_(periodMedRows.reduce(function (s, o) { return s + o.costAmount; }, 0));
     var totalRevenue = round2_(clinicRevenue + medRevenue);
     var expenseFromExpenses = periodExpenses.reduce(function (s, r) { return s + (Number(r.Amount) || 0); }, 0);
@@ -4831,7 +4844,7 @@ function getDashboardData(token, opts) {
     paidRecords.forEach(function (r) { var m = monthKey_(dateStr_(r.Date)); if (monthlyRevenue[m] !== undefined) monthlyRevenue[m] += recordTotalCollected_(r) - (Number(r.MedicineAmount) || 0); });
     medRows.forEach(function (o) {
       var m = monthKey_(o.date);
-      if (monthlyRevenue[m] !== undefined) { monthlyRevenue[m] += o.saleAmount; monthlyExpense[m] += o.costAmount; }
+      if (monthlyRevenue[m] !== undefined) { monthlyRevenue[m] += o.clinicAmount; monthlyExpense[m] += o.costAmount; }
     });
     paidRecords.forEach(function (r) { var m = monthKey_(dateStr_(r.Date)); if (monthlyExpense[m] !== undefined) monthlyExpense[m] += (Number(r.DoctorShare) || 0) + (Number(r.SalesShare) || 0); });
     allExpenses.forEach(function (r) { var m = monthKey_(dateStr_(r.Date)); if (monthlyExpense[m] !== undefined) monthlyExpense[m] += Number(r.Amount) || 0; });
@@ -4913,7 +4926,7 @@ function getDashboardData(token, opts) {
     periodMedRows.forEach(function (o) {
       var i = dayIdx[o.date];
       if (i === undefined) return;
-      medicineDaily[i].revenue += o.saleAmount; medicineDaily[i].cost += o.costAmount; medicineDaily[i].profit += o.margin;
+      medicineDaily[i].revenue += o.clinicAmount; medicineDaily[i].cost += o.costAmount; medicineDaily[i].profit += o.clinicAmount - o.costAmount;
     });
     clinicDaily.forEach(function (x) { x.revenue = round2_(x.revenue); x.expense = round2_(x.expense); x.profit = round2_(x.revenue - x.expense); });
     medicineDaily.forEach(function (x) { x.revenue = round2_(x.revenue); x.cost = round2_(x.cost); x.profit = round2_(x.profit); });
@@ -5475,7 +5488,9 @@ function seedDemoData(token) {
           var medLines = [];
           if (i % 7 === 3) {
             var em = meds[(i + 2) % meds.length], eq = 1 + (i % 3), esp = seedPrice(em, salesP, eq);
-            medLines.push({ itemId: em.id, name: em.name, loc: em.loc, qtyDispensed: eq, qtyUsed: eq, qtyDeposit: 0, expiry: '', unitCost: em.cost, unitPrice: esp.price, amount: round2_(eq * esp.price), priceSource: esp.source, priceRefId: esp.refId, tier: esp.tier });
+            // Every other one is charged 500/unit above the เซลล์ price (ราคาขาย), so รายงานรายเซลล์ shows a ส่วนต่างคืนเซลล์.
+            var charged = i % 14 === 3 ? esp.price + 500 : esp.price;
+            medLines.push({ itemId: em.id, name: em.name, loc: em.loc, qtyDispensed: eq, qtyUsed: eq, qtyDeposit: 0, expiry: '', unitCost: em.cost, unitPrice: charged, amount: round2_(eq * charged), salePrice: esp.price, priceSource: charged !== esp.price ? 'manual' : esp.source, priceRefId: charged !== esp.price ? '' : esp.refId, tier: charged !== esp.price ? null : esp.tier });
           }
           // ยาอื่นๆ: not in stock, typed price.
           if (i % 11 === 5) medLines.push({ other: true, itemId: '', name: 'วิตามินชงดื่ม (ยาอื่นๆ)', qtyDispensed: 1, qtyUsed: 1, qtyDeposit: 0, expiry: '', unitCost: 0, unitPrice: 350, amount: 350, priceSource: 'manual', priceRefId: '', tier: null });
