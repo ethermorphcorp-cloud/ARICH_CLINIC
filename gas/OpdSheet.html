@@ -5,11 +5,16 @@
   // No money totals beyond each line's own amount; the receipt is the bill.
   function escO_(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   function moneyO_(n) { return Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  // Every list keeps at least 3 ruled rows, so what is decided at the visit can be written in by hand.
   function rowsO_(rows, cols) {
-    if (!rows.length) return '<tr><td class="none" colspan="' + cols + '">-</td></tr>';
-    return rows.join('');
+    var out = rows.slice();
+    for (var k = rows.length; k < 3; k++) out.push('<tr class="blank">' + new Array(cols + 1).join('<td>&nbsp;</td>') + '</tr>');
+    return out.join('');
   }
   var d = data;
+  var depRows = d.deposits.map(function (x) {
+    return '<tr><td>' + escO_(x.name) + '</td><td class="num">' + escO_(x.qty) + (x.unit ? ' ' + escO_(x.unit) : '') + '</td><td class="num">' + escO_(x.expiry || '-') + '</td></tr>';
+  });
   var medRows = d.medicines.map(function (m) {
     return '<tr><td class="kind">' + escO_(m.kind) + '</td><td>' + escO_(m.name) + (m.note ? '<div class="sub">' + escO_(m.note) + '</div>' : '') + '</td>' +
       '<td class="num">' + escO_(m.qty) + '</td><td class="num">' + (m.amount == null ? '-' : moneyO_(m.amount)) + '</td></tr>';
@@ -56,6 +61,7 @@
     td.num, th.num { text-align: right; white-space: nowrap; }
     td.kind { color: var(--ink-soft); white-space: nowrap; width: 1%; }
     td.none { color: var(--ink-soft); text-align: center; }
+    tr.blank td { height: 21px; }
     .sub { color: var(--ink-soft); font-size: 9px; }
     .remarks { border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; min-height: 26px; white-space: pre-wrap; }
     .sigs { display: flex; gap: 16px; margin-top: 18px; }
@@ -90,7 +96,7 @@
     <div class="info">
       <div class="k">HN</div><div class="v"><?= d.hn || '-' ?></div>
       <div class="k">วันที่</div><div class="v"><?= d.date ?></div>
-      <div class="k">ชื่อคนไข้</div><div class="v"><?= d.patientName ?><?= d.nickname ? ' (' + d.nickname + ')' : '' ?></div>
+      <div class="k">ชื่อคนไข้</div><div class="v"><?= d.patientName ?><?= d.nickname ? ' (' + d.nickname + ')' : '' ?><?= d.patientPending ? ' (รออัพเดท)' : '' ?></div>
       <div class="k">โทร.</div><div class="v"><?= d.phone || '-' ?></div>
       <div class="k">เพศ / อายุ</div><div class="v"><?= d.gender || '-' ?><?= d.age !== '' ? ' · ' + d.age + ' ปี' : '' ?></div>
       <div class="k">วันเกิด</div><div class="v"><?= d.dob || '-' ?></div>
@@ -98,11 +104,19 @@
       <div class="k">แพทย์</div><div class="v"><?= d.doctorName || '-' ?></div>
     </div>
 
-    <h3>รายการยา</h3>
+    <h3>รายการยา (ที่มายา: ยาฝาก · ยาถือเข้า · ยาเบิก)</h3>
     <table>
-      <thead><tr><th>ประเภท</th><th>รายการยา</th><th class="num">จำนวน</th><th class="num">จำนวนเงิน</th></tr></thead>
+      <thead><tr><th>ที่มายา</th><th>รายการยา</th><th class="num">จำนวน</th><th class="num">จำนวนเงิน</th></tr></thead>
       <tbody><?!= rowsO_(medRows, 4) ?></tbody>
     </table>
+
+    <? if (d.deposits.length) { ?>
+    <h3>ยาฝากคงเหลือของลูกค้า</h3>
+    <table>
+      <thead><tr><th>รายการยาฝาก</th><th class="num">คงเหลือ</th><th class="num">วันหมดอายุ</th></tr></thead>
+      <tbody><?!= depRows.join('') ?></tbody>
+    </table>
+    <? } ?>
 
     <h3>รายการหัตถการ</h3>
     <table>

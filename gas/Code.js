@@ -239,9 +239,13 @@ var CONFIG = {
     // sales/doctor %), MedicineCost their ราคาทุน. CanulaNote: หมายเหตุ Canula.
     // BeforePhotoIds/AfterPhotoIds: JSON lists of Drive file ids (รูป Before /
     // After, up to 8 each); OpdImageFileId is only read for older records.
+    // VisitStatus (ARICH): 'dispensed' จัดยาแล้ว (only on จัดยา-เบิกยา; the customer may still be unknown:
+    // PatientID '' and PatientName = the typed name = "รออัพเดท") → 'pending' รอดำเนินการ (the patient is
+    // known and the front creates the ใบ OPD) → 'waiting_doctor' → 'with_doctor' → 'waiting_payment' →
+    // 'completed'. OpdCreatedAt = when the ใบ OPD was first saved; พบแพทย์ needs it.
     // MessengerJSON (รายการพัสดุ) lines now name a ยา (itemId) and take it out
     // of Stock.
-    Records: ['RID', 'Date', 'PatientID', 'PatientName', 'Phone', 'ServiceCategory', 'Detail', 'DoctorID', 'DoctorName', 'SalesID', 'SalesName', 'PaymentMethod', 'SuppliesJSON', 'UseCanula', 'CanulaAmount', 'Amount', 'Status', 'ReceiptNo', 'Note', 'CreatedBy', 'CreatedAt', 'UpdatedAt', 'OtherAmount', 'SalesCommissionPct', 'SalesShare', 'DoctorCommissionPct', 'DoctorShareRaw', 'DoctorShare', 'DoctorShareNote', 'ClinicShare', 'VisitStatus', 'UsePromo', 'PromoJSON', 'PromoAmount', 'UseMedicine', 'MedicineJSON', 'MedicineAmount', 'UseOther', 'OtherItemsJSON', 'SupplierPayAmount', 'OpdImageFileId', 'UseSupplies', 'UseOwnMed', 'OwnMedJSON', 'UseDepositUse', 'DepositUseJSON', 'UseMessenger', 'MessengerJSON', 'StockApplied', 'UseProcedure', 'ProcedureJSON', 'DoctorSharesJSON', 'WithdrawJSON', 'QueueDate', 'QueueDoctor', 'QueuePay', 'VisitDoctorID', 'VisitDoctorName', 'CanulaNote', 'BeforePhotoIds', 'AfterPhotoIds', 'MedicineCost'],
+    Records: ['RID', 'Date', 'PatientID', 'PatientName', 'Phone', 'ServiceCategory', 'Detail', 'DoctorID', 'DoctorName', 'SalesID', 'SalesName', 'PaymentMethod', 'SuppliesJSON', 'UseCanula', 'CanulaAmount', 'Amount', 'Status', 'ReceiptNo', 'Note', 'CreatedBy', 'CreatedAt', 'UpdatedAt', 'OtherAmount', 'SalesCommissionPct', 'SalesShare', 'DoctorCommissionPct', 'DoctorShareRaw', 'DoctorShare', 'DoctorShareNote', 'ClinicShare', 'VisitStatus', 'UsePromo', 'PromoJSON', 'PromoAmount', 'UseMedicine', 'MedicineJSON', 'MedicineAmount', 'UseOther', 'OtherItemsJSON', 'SupplierPayAmount', 'OpdImageFileId', 'UseSupplies', 'UseOwnMed', 'OwnMedJSON', 'UseDepositUse', 'DepositUseJSON', 'UseMessenger', 'MessengerJSON', 'StockApplied', 'UseProcedure', 'ProcedureJSON', 'DoctorSharesJSON', 'WithdrawJSON', 'QueueDate', 'QueueDoctor', 'QueuePay', 'VisitDoctorID', 'VisitDoctorName', 'CanulaNote', 'BeforePhotoIds', 'AfterPhotoIds', 'MedicineCost', 'OpdCreatedAt'],
     // MedDeposits — ยาฝาก, one row per lot: a record's medicine line that is
     // not all used creates a lot (RecordID = that record) with its own
     // ExpiryDate; รายการใช้ยาฝาก takes from the patient's lots, earliest
@@ -1160,6 +1164,22 @@ function getNextPatientId(token) {
     return { ok: true, data: 'P' + peekNextSeq_('PATIENT', 5) };
   });
 }
+/** The next HN: "HN" + the highest number found in the Patients sheet + 1 (HN1001 when there is none). Read-only. */
+function nextHn_() {
+  var max = 1000;
+  getRows_(getSheet_(CONFIG.SHEETS.PATIENTS)).forEach(function (p) {
+    var m = /^HN(\d+)$/i.exec(String(p.HN || '').trim());
+    if (m && Number(m[1]) > max) max = Number(m[1]);
+  });
+  return 'HN' + (max + 1);
+}
+/** Preview of the next HN for the "new patient" form (the real one is taken when the profile is saved). */
+function getNextHn(token) {
+  return safeCall_(function () {
+    requireAuth_(token, 'staff');
+    return { ok: true, data: nextHn_() };
+  });
+}
 function peekNextSeq_(counterKey, pad) {
   var rows = getRows_(getSheet_(CONFIG.SHEETS.COUNTERS));
   var found = rows.filter(function (r) { return r.Key === counterKey; })[0];
@@ -1235,7 +1255,8 @@ function savePatient(token, patient) {
     try {
       var sheet = getSheet_(CONFIG.SHEETS.PATIENTS);
       var isNew = !patient.id;
-      var hn = String(patient.hn || '').trim();
+      // A new profile always gets the next HN automatically; an existing one keeps (or is corrected to) the HN typed.
+      var hn = isNew ? nextHn_() : String(patient.hn || '').trim();
       if (hn) {
         var taken = getRows_(sheet).filter(function (p) { return String(p.HN || '').trim().toLowerCase() === hn.toLowerCase() && p.ID !== patient.id; })[0];
         if (taken) throw ValidationError_('เลข HN ' + hn + ' ซ้ำกับคนไข้ ' + taken.FirstName + ' ' + taken.LastName);
@@ -2550,6 +2571,7 @@ function mapRecordOut_(r) {
     estimatedRevenue: grossBase,
     totalCollected: collected,
     visitStatus: visitStatusOf_(r), // see visitStatusOf_: older ''/'scheduled' read as จัดยาแล้ว
+    opdCreated: !!r.OpdCreatedAt, patientPending: !r.PatientID, // ใบ OPD saved at least once / the customer is still only a typed name (รออัพเดท)
     queueDate: r.QueueDate ? dateStr_(r.QueueDate) : '', queueDoctor: Number(r.QueueDoctor) || null, queuePay: null,
     visitDoctorId: r.VisitDoctorID || '', visitDoctorName: r.VisitDoctorName || '',
     // Round 14 item 1.7 — OPD photo attachment (Drive fileId; fetch its
@@ -2608,19 +2630,20 @@ function recordCollected_(r) {
 }
 
 /* ---------------------------------------------------------------------
-   สถานะการรักษา: จัดยาแล้ว → รอพบแพทย์ → พบแพทย์ → รอชำระเงิน → เสร็จสิ้น.
-   Front moves จัดยาแล้ว → รอพบแพทย์ → พบแพทย์ (choosing the doctor) and takes payment;
+   สถานะการรักษา: จัดยาแล้ว → รอดำเนินการ → รอพบแพทย์ → พบแพทย์ → รอชำระเงิน → เสร็จสิ้น.
+   จัดยาแล้ว → รอดำเนินการ needs the customer's profile and the front creates the ใบ OPD (OpdCreatedAt);
+   พบแพทย์ needs that ใบ OPD. Front moves รอดำเนินการ → รอพบแพทย์ → พบแพทย์ (choosing the doctor) and takes payment;
    the doctor moves พบแพทย์ → รอชำระเงิน by saving the treatment record. Back
    while unpaid; เสร็จสิ้น is only ever reached by payment. Arriving (รอพบแพทย์)
    takes the day's next queue number, which the customer keeps to the end.
    --------------------------------------------------------------------- */
-var VISIT_FLOW_ = ['dispensed', 'waiting_doctor', 'with_doctor', 'waiting_payment', 'completed'];
+var VISIT_FLOW_ = ['dispensed', 'pending', 'waiting_doctor', 'with_doctor', 'waiting_payment', 'completed'];
 
 /** The record's step, whatever older rows stored: paid = เสร็จสิ้น; a stored 'completed' that isn't paid is รอชำระเงิน; ''/'scheduled' = จัดยาแล้ว. */
 function visitStatusOf_(r) {
   if (r.Status === 'paid') return 'completed';
   var v = String(r.VisitStatus || '');
-  if (v === 'waiting_doctor' || v === 'with_doctor' || v === 'waiting_payment') return v;
+  if (v === 'pending' || v === 'waiting_doctor' || v === 'with_doctor' || v === 'waiting_payment') return v;
   if (v === 'completed') return r.Status === 'cancelled' ? 'completed' : 'waiting_payment';
   return 'dispensed';
 }
@@ -2640,13 +2663,17 @@ function applyVisitStatus_(r, to, day, shiftDate, doctor) {
   if (VISIT_FLOW_.indexOf(to) < 0) throw ValidationError_('สถานะการรักษาไม่ถูกต้อง');
   if (r.Status === 'paid') throw ValidationError_('ชำระเงินแล้ว — เปลี่ยนสถานะไม่ได้ (ยกเลิกการชำระเงินก่อน)');
   if (to === 'completed') throw ValidationError_('สถานะเสร็จสิ้นเกิดจากการชำระเงินเท่านั้น');
+  // จัดยาแล้ว only moves on to รอดำเนินการ: the profile is filled in and the front creates the ใบ OPD there.
+  if (from === 'dispensed' && to !== 'pending') throw ValidationError_('ต้องเปลี่ยนเป็นรอดำเนินการก่อน (ใส่ข้อมูลคนไข้และสร้างใบ OPD)');
+  if (to === 'pending' && !r.PatientID) throw ValidationError_('กรุณาใส่ข้อมูลคนไข้ก่อนเปลี่ยนเป็นรอดำเนินการ');
   if (to === 'with_doctor') {
+    if (!r.OpdCreatedAt) throw ValidationError_('ต้องสร้างใบ OPD ก่อนพบแพทย์');
     if (doctor) { r.VisitDoctorID = doctor.id; r.VisitDoctorName = doctor.name; }
     else if (!r.VisitDoctorID) throw ValidationError_('กรุณาเลือกแพทย์ที่จะเข้าพบ');
-  } else if (to === 'dispensed' || to === 'waiting_doctor') {
+  } else if (to === 'dispensed' || to === 'pending' || to === 'waiting_doctor') {
     r.VisitDoctorID = ''; r.VisitDoctorName = '';
   }
-  if (to === 'dispensed') {
+  if (to === 'dispensed' || to === 'pending') {
     r.QueueDate = ''; r.QueueDoctor = ''; r.QueuePay = '';
   } else {
     // First arrival: the customer takes today as their queue day (and treatment date, when asked) and a doctor-queue number.
@@ -3529,7 +3556,7 @@ function saveRecord(token, record) {
       // สถานะการรักษา: a save keeps the record's step; "บันทึกการรักษา" (record.complete) moves it on to
       // รอชำระเงิน; a record made by hand (no จัดยา-เบิกยา first) starts at พบแพทย์. Paying makes it เสร็จสิ้น.
       var visitFields = isNew
-        ? { VisitStatus: 'dispensed', QueueDate: '', QueueDoctor: '', QueuePay: '', VisitDoctorID: '', VisitDoctorName: '' }
+        ? { VisitStatus: 'pending', QueueDate: '', QueueDoctor: '', QueuePay: '', VisitDoctorID: '', VisitDoctorName: '' }
         : { VisitStatus: visitStatusOf_(existing), QueueDate: existing.QueueDate || '', QueueDoctor: existing.QueueDoctor || '', QueuePay: existing.QueuePay || '', VisitDoctorID: existing.VisitDoctorID || '', VisitDoctorName: existing.VisitDoctorName || '' };
 
       var obj = {
@@ -3554,6 +3581,7 @@ function saveRecord(token, record) {
         // client-side via the shared resumable-chunk-upload flow before
         // save; see startResumableUpload's 'opd-photo' kind).
         OpdImageFileId: record.opdImageFileId || '',
+        OpdCreatedAt: isNew ? nowStr_() : (existing.OpdCreatedAt || nowStr_()), // saving the ใบ OPD (OPD form) is what creates it
         CanulaNote: record.useCanula ? String(record.canulaNote || '').trim() : '',
         BeforePhotoIds: JSON.stringify(beforePhotoIds), AfterPhotoIds: JSON.stringify(afterPhotoIds),
         MedicineCost: medicineGroup.cost,
@@ -3566,11 +3594,7 @@ function saveRecord(token, record) {
         WithdrawJSON: JSON.stringify(withdrawItems)
       };
       applyDoctorShares_(obj, doctorShares); // DoctorID/DoctorName/shares/ClinicShare
-      if (isNew) {
-        // Made by hand: the customer is already with the doctor of its first หัตถการ/โปร line (if any).
-        var firstDoctor = doctorEntries.length ? doctorById[doctorEntries[0].doctorId] : null;
-        applyVisitStatus_(obj, 'with_doctor', record.date, false, firstDoctor ? { id: firstDoctor.DoctorID, name: firstDoctor.Name } : { id: '', name: '' });
-      }
+      // A ใบ OPD made by hand waits at รอดำเนินการ (visitFields above); the front moves it on to รอพบแพทย์ / พบแพทย์.
       if (record.complete && visitStatusOf_(obj) !== 'completed') applyVisitStatus_(obj, 'waiting_payment', todayStr_(), false);
       obj.VisitStatus = visitStatusOf_(obj);
 
@@ -3772,7 +3796,13 @@ function buildOpdSheetData_(rid) {
   parseLineItems_(r.PromoJSON).forEach(function (p) { others.push({ kind: 'โปรหน้าคลินิก', name: p.name + (doctorById[p.doctorId] ? ' · ' + doctorById[p.doctorId] : ''), amount: Number(p.amount) || 0 }); });
   if (isTrue_(r.UseCanula)) others.push({ kind: 'Canula', name: 'เข็มทู่' + (r.CanulaNote ? ' · ' + r.CanulaNote : ''), amount: Number(r.CanulaAmount) || 0 });
   parseLineItems_(r.OtherItemsJSON).forEach(function (o) { others.push({ kind: 'อื่นๆ', name: o.label || 'รายการอื่นๆ', amount: Number(o.amount) || 0 }); });
+  // ยาฝาก the customer still has (ดึงจาก stock ฝาก), so the front and the doctor see what can be used.
+  var deposits = !r.PatientID ? [] : getRows_(getSheet_(CONFIG.SHEETS.MED_DEPOSITS)).filter(function (x) { return x.PatientID === r.PatientID && Number(x.QtyRemaining) > 0; }).map(function (x) {
+    var st = stockById[x.ItemID];
+    return { name: withLoc({ name: x.ItemName, itemId: x.ItemID }), qty: Number(x.QtyRemaining) || 0, unit: st ? st.Unit || '' : '', expiry: x.ExpiryDate ? dateStr_(x.ExpiryDate) : '' };
+  });
   return {
+    patientPending: !r.PatientID, deposits: deposits,
     rid: r.RID, date: dateStr_(r.Date), queueNo: r.QueueDoctor || '',
     hn: patient.HN || '', patientName: r.PatientName, nickname: patient.Nickname || '', phone: r.Phone || '',
     gender: gender, dob: dob, age: age,
@@ -3980,7 +4010,7 @@ function listMedWithdrawals(token, opts) {
       var key = r.BatchID || (dateStr_(r.Date) + '|' + r.PatientID + '|' + r.SalesID);
       var g = groups[key];
       if (!g) {
-        g = groups[key] = { id: key, date: dateStr_(r.Date), patientId: r.PatientID, hn: hnById[r.PatientID] || '', patientName: r.PatientName, phone: r.Phone, salesId: r.SalesID, salesName: r.SalesName, note: r.Note || '', createdAt: String(r.CreatedAt), lines: [] };
+        g = groups[key] = { id: key, patientPending: !r.PatientID, date: dateStr_(r.Date), patientId: r.PatientID, hn: hnById[r.PatientID] || '', patientName: r.PatientName, phone: r.Phone, salesId: r.SalesID, salesName: r.SalesName, note: r.Note || '', createdAt: String(r.CreatedAt), lines: [] };
         order.push(g);
       }
       var out = mapWithdrawalOut_(r, showCost, stockById);
@@ -4002,7 +4032,38 @@ function listMedWithdrawals(token, opts) {
 }
 
 /**
- * Moves a treatment record to another step: to = 'dispensed' | 'waiting_doctor' | 'with_doctor' | 'waiting_payment'.
+ * Gives a record that was made with only a typed name (รออัพเดท) its real patient: the Records row and every
+ * จัดยา-เบิกยา line of it take the patient's id, name and phone. Refused once the record has a patient.
+ */
+function assignRecordPatient(token, rid, patientId) {
+  return safeCall_(function () {
+    var session = requireAuth_(token, 'staff');
+    var lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+    try {
+      var sheet = getSheet_(CONFIG.SHEETS.RECORDS);
+      var row = getRows_(sheet).filter(function (r) { return r.RID === rid; })[0];
+      if (!row) throw ValidationError_('ไม่พบข้อมูลการรักษา');
+      if (row.PatientID) throw ValidationError_('รายการนี้มีข้อมูลคนไข้แล้ว');
+      var patient = getRows_(getSheet_(CONFIG.SHEETS.PATIENTS)).filter(function (p) { return p.ID === patientId; })[0];
+      if (!patient) throw ValidationError_('ไม่พบข้อมูลคนไข้ที่เลือก');
+      var name = patient.FirstName + ' ' + patient.LastName;
+      updateRowByIndex_(sheet, CONFIG.HEADERS.Records, row._row, Object.assign({}, row, { PatientID: patient.ID, PatientName: name, Phone: patient.Phone, UpdatedAt: nowStr_() }));
+      var wdSheet = getSheet_(CONFIG.SHEETS.MED_WITHDRAWALS);
+      getRows_(wdSheet).filter(function (w) { return w.RecordID === rid; }).forEach(function (w) {
+        updateRowByIndex_(wdSheet, CONFIG.HEADERS.MedWithdrawals, w._row, Object.assign({}, w, { PatientID: patient.ID, PatientName: name, Phone: patient.Phone }));
+      });
+      writeAudit_(session, 'UPDATE', 'Record', rid, 'ข้อมูลคนไข้: ' + row.PatientName + ' → ' + patient.ID + ' ' + name);
+      bumpDashboardCacheVersion_();
+      return { ok: true, data: { id: rid, patientId: patient.ID, patientName: name } };
+    } finally {
+      lock.releaseLock();
+    }
+  });
+}
+
+/**
+ * Moves a treatment record to another step: to = 'dispensed' | 'pending' | 'waiting_doctor' | 'with_doctor' | 'waiting_payment'.
  * Arriving (รอพบแพทย์) takes today's next queue number, and a record dispensed on an earlier day takes today as its
  * treatment date; พบแพทย์ needs the doctor (doctorId) the customer goes in to see.
  */
@@ -4052,8 +4113,8 @@ function getQueueAlerts(token) {
 }
 
 /**
- * The "ระหว่างดำเนินการ" board for one day (default today): five columns by สถานะการรักษา with counts.
- * จัดยาแล้ว lists everything still waiting for its customer (any date — dispensing is often the day before);
+ * The "ระหว่างดำเนินการ" board for one day (default today): five columns by สถานะการรักษา with counts
+ * (จัดยาแล้ว lives on จัดยา-เบิกยา only). รอดำเนินการ lists everything not yet sent on (any date — dispensing is often the day before);
  * the other columns hold that day's queue (รอพบแพทย์ / พบแพทย์ / รอชำระเงิน carried over from earlier days show on today's board, flagged).
  */
 function getQueueBoard(token, date) {
@@ -4062,11 +4123,12 @@ function getQueueBoard(token, date) {
     var today = todayStr_(), day = date || today;
     requireDateStr_(day, 'วันที่');
     var hnById = patientHnById_();
-    var cols = { dispensed: [], waiting_doctor: [], with_doctor: [], waiting_payment: [], completed: [] };
+    var cols = { pending: [], waiting_doctor: [], with_doctor: [], waiting_payment: [], completed: [] };
     getRows_(getSheet_(CONFIG.SHEETS.RECORDS)).forEach(function (r) {
       if (r.Status === 'cancelled') return;
       var st = visitStatusOf_(r), d = dateStr_(r.QueueDate || r.Date), carry = false;
-      if (st !== 'dispensed' && d !== day) {
+      if (st === 'dispensed') return; // not on the board until it becomes รอดำเนินการ
+      if (st !== 'pending' && d !== day) {
         if (st !== 'completed' && day === today && d < today) carry = true; else return;
       }
       var wd = parseLineItems_(r.WithdrawJSON);
@@ -4077,20 +4139,21 @@ function getQueueBoard(token, date) {
         date: dateStr_(r.Date), queueDate: r.QueueDate ? dateStr_(r.QueueDate) : '', carryover: carry,
         queueDoctor: Number(r.QueueDoctor) || null,
         visitDoctorId: r.VisitDoctorID || '', visitDoctorName: r.VisitDoctorName || '',
-        salesName: r.SalesName || '', doctors: st === 'dispensed' || st === 'waiting_doctor' ? [] : Object.keys(docs), // no treatment record before พบแพทย์
+        opdCreated: !!r.OpdCreatedAt,
+        salesName: r.SalesName || '', doctors: st === 'pending' || st === 'waiting_doctor' ? [] : Object.keys(docs), // no treatment record before พบแพทย์
         items: wd.slice(0, 3).map(function (l) { return l.name + ' ×' + l.qtyDispensed; }), moreItems: Math.max(0, wd.length - 3),
         total: st === 'waiting_payment' || st === 'completed' ? recordCollected_(r) : null,
         paymentMethod: r.PaymentMethod || '', createdAt: String(r.CreatedAt)
       });
     });
     var num = function (v) { return v == null ? 1e9 : v; };
-    cols.dispensed.sort(function (a, b) { return a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt); });
+    cols.pending.sort(function (a, b) { return a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt); });
     ['waiting_doctor', 'with_doctor'].forEach(function (k) {
       cols[k].sort(function (a, b) { return a.queueDate.localeCompare(b.queueDate) || num(a.queueDoctor) - num(b.queueDoctor) || a.createdAt.localeCompare(b.createdAt); });
     });
     cols.waiting_payment.sort(function (a, b) { return a.queueDate.localeCompare(b.queueDate) || num(a.queueDoctor) - num(b.queueDoctor) || a.createdAt.localeCompare(b.createdAt); });
     cols.completed.sort(function (a, b) { return num(a.queueDoctor) - num(b.queueDoctor) || a.createdAt.localeCompare(b.createdAt); });
-    return { ok: true, data: { date: day, columns: cols, counts: { dispensed: cols.dispensed.length, waiting_doctor: cols.waiting_doctor.length, with_doctor: cols.with_doctor.length, waiting_payment: cols.waiting_payment.length, completed: cols.completed.length } } };
+    return { ok: true, data: { date: day, columns: cols, counts: { pending: cols.pending.length, waiting_doctor: cols.waiting_doctor.length, with_doctor: cols.with_doctor.length, waiting_payment: cols.waiting_payment.length, completed: cols.completed.length } } };
   });
 }
 
@@ -4099,7 +4162,10 @@ function saveMedWithdrawal(token, payload) {
   return safeCall_(function () {
     var session = requireAuth_(token, 'staff');
     payload = payload || {};
-    requireFields_(payload, { date: 'วันที่', patientId: 'คนไข้', salesId: 'ชื่อเซลล์' });
+    requireFields_(payload, { date: 'วันที่', salesId: 'ชื่อเซลล์' });
+    // No profile yet (ไม่ทราบประวัติ): the typed name is kept with PatientID '' and shows as รออัพเดท until the profile is set.
+    var typedName = String(payload.patientName || '').trim();
+    if (!payload.patientId && !typedName) throw ValidationError_('กรุณาเลือกคนไข้ หรือพิมพ์ชื่อคนไข้');
     requireDateStr_(payload.date, 'วันที่');
     var lines = (Array.isArray(payload.lines) ? payload.lines : []).filter(function (l) { return l && l.itemId; });
     if (!lines.length) throw ValidationError_('กรุณาเลือกยาอย่างน้อย 1 รายการ');
@@ -4107,19 +4173,25 @@ function saveMedWithdrawal(token, payload) {
     var lock = LockService.getScriptLock();
     lock.waitLock(30000);
     try {
-      var patient = getRows_(getSheet_(CONFIG.SHEETS.PATIENTS)).filter(function (p) { return p.ID === payload.patientId; })[0];
-      if (!patient) throw ValidationError_('ไม่พบข้อมูลคนไข้ที่เลือก');
+      var patient;
+      if (payload.patientId) {
+        patient = getRows_(getSheet_(CONFIG.SHEETS.PATIENTS)).filter(function (p) { return p.ID === payload.patientId; })[0];
+        if (!patient) throw ValidationError_('ไม่พบข้อมูลคนไข้ที่เลือก');
+      } else {
+        patient = { ID: '', FirstName: typedName, LastName: '', Phone: '' };
+      }
       var sales = getRows_(getSheet_(CONFIG.SHEETS.SALES)).filter(function (s) { return s.SalesID === payload.salesId; })[0];
       if (!sales) throw ValidationError_('ไม่พบข้อมูลเซลล์ที่เลือก');
       var stockById = {};
       getRows_(getSheet_(CONFIG.SHEETS.STOCK)).forEach(function (r) { stockById[r.ItemID] = r; });
       var ovrByItem = stockPriceOverridesByItem_(), who = salesWho_(sales);
-      var patientName = patient.FirstName + ' ' + patient.LastName;
+      var patientName = (patient.FirstName + ' ' + patient.LastName).trim();
       var take = {};
       var rows = lines.map(function (l, i) {
         var line = ' (บรรทัดที่ ' + (i + 1) + ')';
         var item = stockById[l.itemId];
         if (!item || stockTypeOf_(item) !== 'medicine') throw ValidationError_('กรุณาเลือกยาจากรายการสต๊อกยา' + line);
+        if (l.loc && String(l.loc).toUpperCase() !== stockLocOf_(item)) throw ValidationError_('ยาที่เลือกไม่อยู่ใน Stock ' + l.loc + line);
         var qty = requireNumber_(l.qty, 'จำนวน' + line, { min: 0 });
         if (!qty) throw ValidationError_('จำนวนต้องมากกว่า 0' + line);
         var cost = Number(item.CostPrice) || 0;
@@ -4127,7 +4199,7 @@ function saveMedWithdrawal(token, payload) {
         var price = unitPriceForQty_(resolveItemPrices_(item, ovrByItem[item.ItemID], who).prices, qty);
         take[item.ItemID] = round2_((take[item.ItemID] || 0) + qty);
         return {
-          Date: payload.date, PatientID: patient.ID, PatientName: patientName, Phone: patient.Phone,
+          Date: payload.date, PatientID: patient.ID || '', PatientName: patientName, Phone: patient.Phone || '',
           SalesID: sales.SalesID, SalesName: sales.Name, ItemID: item.ItemID, ItemName: item.Name,
           Qty: qty, UnitCost: cost, Amount: round2_(qty * cost), UnitPrice: price == null ? '' : price, SaleAmount: price == null ? '' : round2_(qty * price),
           Note: payload.note || '', CreatedBy: session.username, CreatedAt: nowStr_(),
@@ -4143,7 +4215,7 @@ function saveMedWithdrawal(token, payload) {
       var rid = 'R' + nextSeq_('RECORD', 6);
       rows.forEach(function (r, i) { r.WithdrawID = 'WD' + ids[i]; r.BatchID = batchId; r.RecordID = rid; appendRow_(sheet, CONFIG.HEADERS.MedWithdrawals, r); });
       var rec = {
-        RID: rid, Date: payload.date, PatientID: patient.ID, PatientName: patientName, Phone: patient.Phone,
+        RID: rid, Date: payload.date, PatientID: patient.ID || '', PatientName: patientName, Phone: patient.Phone || '',
         SalesID: sales.SalesID, SalesName: sales.Name, Status: 'unpaid', PaymentMethod: '', ReceiptNo: '', Note: '',
         CreatedBy: session.username, CreatedAt: nowStr_(), UpdatedAt: nowStr_(),
         SalesCommissionPct: Number(sales.CommissionRate) || 0, SalesShare: 0, VisitStatus: 'dispensed', StockApplied: 'TRUE',
@@ -4153,7 +4225,7 @@ function saveMedWithdrawal(token, payload) {
       };
       applyDoctorShares_(rec, []); // no doctor yet: หัตถการ lines name theirs
       appendRow_(getSheet_(CONFIG.SHEETS.RECORDS), CONFIG.HEADERS.Records, rec);
-      writeAudit_(session, 'CREATE', 'MedWithdrawal', rows.map(function (r) { return r.WithdrawID; }).join(','), patientName + ' x' + rows.length + ' → ' + rid);
+      writeAudit_(session, 'CREATE', 'MedWithdrawal', rows.map(function (r) { return r.WithdrawID; }).join(','), patientName + (patient.ID ? '' : ' (รออัพเดท)') + ' x' + rows.length + ' → ' + rid);
       bumpDashboardCacheVersion_();
       return { ok: true, data: { ids: rows.map(function (r) { return r.WithdrawID; }), recordId: rid } };
     } finally {
@@ -5406,7 +5478,7 @@ function seedDemoData(token) {
             UseCanula: useCanula ? 'TRUE' : 'FALSE', CanulaAmount: canulaAmount, Amount: amount, Status: status, ReceiptNo: '', Note: '',
             CreatedBy: actor, CreatedAt: nowStr_(), UpdatedAt: nowStr_(), OtherAmount: otherAmount,
             SalesCommissionPct: salesPct, SalesShare: round2_(amount * salesPct / 100),
-            VisitStatus: draft ? 'dispensed' : 'completed',
+            VisitStatus: draft ? 'dispensed' : 'completed', OpdCreatedAt: nowStr_(),
             UsePromo: promo ? 'TRUE' : 'FALSE', PromoJSON: JSON.stringify(promoLine ? [promoLine] : []), PromoAmount: promoAmount,
             UseMedicine: medLines.length ? 'TRUE' : 'FALSE', MedicineJSON: JSON.stringify(medLines), MedicineAmount: medicineAmount,
             MedicineCost: round2_(medLines.reduce(function (sum, x) { return sum + (Number(x.qtyDispensed) || 0) * (Number(x.unitCost) || 0); }, 0)), CanulaNote: useCanula ? 'ใต้ตา' : '',
@@ -5435,9 +5507,10 @@ function seedDemoData(token) {
 
       // The latest จัดยา-เบิกยา (yesterday = dispensed in advance, and today): each opened its record, with no
       // หัตถการ yet. Yesterday has two customers for the same sales person so รายงานรายเซลล์ shows a stacked day.
-      // The status pass below keeps the first two at จัดยาแล้ว, and moves the rest to รอพบแพทย์ / พบแพทย์.
-      [[1, 0, 0, [[0, 2], [2, 3]]], [1, 0, 5, [[2, 5], [3, 1]]], [1, 1, 3, [[1, 1]]], [0, 0, 7, [[4, 2]]], [0, 1, 2, [[0, 1]]], [0, 1, 6, [[3, 2]]]].forEach(function (w) {
-        var date = dayStr(w[0]), salesP = sales[w[1]], patient = patients[w[2]];
+      // The status pass below keeps the first two at จัดยาแล้ว, and moves the rest to รอดำเนินการ / รอพบแพทย์ / พบแพทย์.
+      // The last one is a customer whose name is not known yet (patient index -1): only the typed name, shown as รออัพเดท.
+      [[1, 0, 0, [[0, 2], [2, 3]]], [1, 0, 5, [[2, 5], [3, 1]]], [1, 1, 3, [[1, 1]]], [0, 0, 7, [[4, 2]]], [0, 1, 2, [[0, 1]]], [0, 1, 6, [[3, 2]]], [0, 1, -1, [[1, 1]]]].forEach(function (w) {
+        var date = dayStr(w[0]), salesP = sales[w[1]], patient = w[2] < 0 ? { id: '', name: 'คุณมะลิ', phone: '' } : patients[w[2]];
         var rid = 'R' + nextSeq_('RECORD', 6), batch = 'WB' + nextSeq_('WITHDRAW_BATCH', 5);
         var items = w[3].map(function (pair) {
           var m = meds[pair[0]], q = pair[1];
@@ -5523,18 +5596,22 @@ function seedDemoData(token) {
             r.QueueDate = day; r.QueueDoctor = nextQueueNo_('D', day); r.VisitDoctorID = d.id; r.VisitDoctorName = d.name;
             write(r);
           });
-        // 2. the จัดยา-เบิกยา-only records, in order: two stay จัดยาแล้ว (dispensed in advance), two have arrived (รอพบแพทย์),
-        //    two are with a doctor (different doctors). The ones with a doctor arrived first, so they take the earlier numbers.
+        // 2. the จัดยา-เบิกยา-only records, in order: two stay จัดยาแล้ว (dispensed in advance), one is รอดำเนินการ without its ใบ OPD yet,
+        //    one has its ใบ OPD and has arrived (รอพบแพทย์), two are with a doctor (different doctors); the unknown-name customer stays
+        //    จัดยาแล้ว (รออัพเดท). The ones with a doctor arrived first, so they take the earlier numbers.
         var onlyDispensed = rows.filter(function (r) { return visitStatusOf_(r) === 'dispensed' && !recordHasContent_(r); })
           .sort(function (a, b) { return String(a.RID).localeCompare(String(b.RID)); });
-        var plan = [['dispensed'], ['dispensed'], ['waiting_doctor'], ['waiting_doctor'], ['with_doctor', 0], ['with_doctor', 1]];
+        var plan = [['dispensed'], ['dispensed'], ['pending'], ['waiting_doctor'], ['with_doctor', 0], ['with_doctor', 1], ['dispensed']];
         var order = [4, 5, 2, 3];
         order.forEach(function (idx) {
           var r = onlyDispensed[idx], step = plan[idx];
           if (!r) return;
           var doc = step[1] != null ? { id: doctors[step[1] % doctors.length].id, name: doctors[step[1] % doctors.length].name } : null;
-          r.VisitStatus = 'dispensed';
-          applyVisitStatus_(r, step[0], today, true, doc);
+          if (step[0] !== 'dispensed') {
+            r.VisitStatus = 'pending'; // จัดยาแล้ว → รอดำเนินการ first (the profile is known); the front then creates the ใบ OPD
+            if (step[0] !== 'pending') r.OpdCreatedAt = nowStr_();
+            applyVisitStatus_(r, step[0], today, true, doc);
+          }
           write(r);
         });
       })();

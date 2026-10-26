@@ -517,7 +517,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     // Flow: ข้อมูลคนไข้ > จัดยา-เบิกยา (จัดยาแล้ว) > รอพบแพทย์ > รอชำระเงิน > เสร็จสิ้น — moved on the ระหว่างดำเนินการ board or from the lists.
     { id: 'patients', label: 'ข้อมูลคนไข้', icon: 'groups', sub: 'ฐานข้อมูลลูกค้า เลข HN และประวัติการรักษา' },
     { id: 'withdraw', label: 'จัดยา-เบิกยา', icon: 'medication', sub: 'จัดยาและเบิกยาจากสต๊อกให้คนไข้ ก่อนบันทึกการรักษา' },
-    { id: 'board', label: 'ระหว่างดำเนินการ', icon: 'view_kanban', sub: 'คิวของวันนี้: จัดยาแล้ว → รอพบแพทย์ → รอชำระเงิน → เสร็จสิ้น' },
+    { id: 'board', label: 'ระหว่างดำเนินการ', icon: 'view_kanban', sub: 'คิวของวันนี้: รอดำเนินการ → รอพบแพทย์ → พบแพทย์ → รอชำระเงิน → เสร็จสิ้น' },
     { id: 'records', label: 'OPD', icon: 'medical_services', sub: 'บันทึกการรักษา: ยา หัตถการ เวชภัณฑ์ รายการอื่นๆ และชำระเงิน' },
     { id: 'deposits', label: 'รายการยาฝาก', icon: 'vaccines', sub: 'ยาฝากของคนไข้ จำนวนคงเหลือ และวันหมดอายุ' },
     { id: 'reports', label: 'รายงาน', icon: 'assessment', sub: 'รายงานรายวัน และรายงานรายเซลล์', adminOnly: true },
@@ -1516,9 +1516,12 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   }
 
   function newPatientModal() {
-    openModal('patient', { hn: '', firstName: '', lastName: '', nickname: '', phone: '', dob: '', gender: 'female', email: '', photoFileId: '', _previewId: '' });
+    openModal('patient', { hn: '', firstName: '', lastName: '', nickname: '', phone: '', dob: '', gender: 'female', email: '', photoFileId: '', _previewId: '', _previewHn: '' });
     call('getNextPatientId', session.token, gsOpts({ quiet: true })).then(function (res) {
       if (res.ok && state.draft && !state.draft.id) { state.draft._previewId = res.data; render(); }
+    });
+    call('getNextHn', session.token, gsOpts({ quiet: true })).then(function (res) {
+      if (res.ok && state.draft && !state.draft.id) { state.draft._previewHn = res.data; render(); }
     });
   }
   function editPatientModal(id) {
@@ -1655,7 +1658,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       date: todayStr(), patientId: patient.id, patientName: patient.firstName + ' ' + patient.lastName, phone: patient.phone,
       patientNickname: patient.nickname || '',
       serviceCategory: '', detail: '', salesId: '', useCanula: false, canulaAmount: 0,
-      amount: 0, otherAmount: 0, status: 'unpaid', visitStatus: 'with_doctor', note: '', receiptNo: '',
+      amount: 0, otherAmount: 0, status: 'unpaid', visitStatus: 'pending', note: '', receiptNo: '',
       opdImageFileId: '',
       _patientQuery: patient.firstName + ' ' + patient.lastName, _patientSuggest: []
     }, emptyLineItemGroups()));
@@ -1677,7 +1680,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       (!d.id ? '<div style="font-size:11px;color:var(--muted);margin-top:3px">สร้างอัตโนมัติเมื่อบันทึก</div>' : ''));
     return modalHeader(d.id ? 'แก้ไขข้อมูลคนไข้' : 'เพิ่มคนไข้ใหม่') +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">' +
-        field('เลข HN', bindInput('hn', 'text', 'placeholder="กรอกเลข HN ของคลินิก"')) + idField +
+        (d.id ? field('เลข HN', bindInput('hn', 'text', 'placeholder="เลข HN ของคลินิก"'))
+          : field('เลข HN (ระบบรันให้)', '<input type="text" value="' + esc(d._previewHn || 'กำลังสร้าง...') + '" disabled style="' + inputStyle + ';background:var(--hover-bg);color:var(--muted)"><div style="font-size:11px;color:var(--muted);margin-top:3px">รันอัตโนมัติเมื่อบันทึก</div>')) + idField +
       '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">' +
         field('ชื่อ', bindInput('firstName', 'text', 'required'), true) + field('นามสกุล', bindInput('lastName', 'text', 'required'), true) +
@@ -1691,8 +1695,10 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   function savePatientModal() {
     var d = state.draft;
     if (!d.firstName || !d.lastName || !d.phone) { toast('error', 'กรุณากรอกชื่อ นามสกุล และเบอร์โทรศัพท์ให้ครบถ้วน'); return; }
-    call('savePatient', session.token, d).then(function () {
-      toast('success', 'บันทึกข้อมูลคนไข้แล้ว'); closeModal(); loadPatients(); refreshPatientsSuggestCache();
+    call('savePatient', session.token, d).then(function (res) {
+      toast('success', 'บันทึกข้อมูลคนไข้แล้ว' + (!d.id && res.data && res.data.hn ? ' · HN ' + res.data.hn : '')); closeModal(); loadPatients(); refreshPatientsSuggestCache();
+      // Opened from ใส่ข้อมูลคนไข้ (จัดยา-เบิกยา): the new profile goes straight onto that record.
+      if (d._assign && res.data && res.data.id) finishAssignPatient(d._assign.rid, res.data.id, d._assign.thenPending);
     });
   }
 
@@ -1827,10 +1833,11 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   function statusBadge(s) { return '<span class="tag-badge" style="background:' + (STATUS_COLOR[s] || '#eee') + ';white-space:nowrap">' + esc(STATUS_LABEL[s] || s) + '</span>'; }
   // VisitStatus is a separate workflow marker from the payment Status above —
   // it never affects revenue gating, calendar coloring, or receipt issuance.
-  // Set by the server: จัดยาแล้ว → รอพบแพทย์ → รอชำระเงิน → เสร็จสิ้น (= paid); see visitStatusOf_ in Code.js.
-  var VISIT_STATUS_LABEL = { dispensed: 'จัดยาแล้ว', waiting_doctor: 'รอพบแพทย์', with_doctor: 'พบแพทย์', waiting_payment: 'รอชำระเงิน', completed: 'เสร็จสิ้น' };
-  var VISIT_STATUS_COLOR = { dispensed: 'var(--amber-soft)', waiting_doctor: 'var(--accent-soft)', with_doctor: 'var(--gold-soft)', waiting_payment: 'var(--pink-soft)', completed: 'var(--green-soft)' };
-  var VISIT_FLOW = ['dispensed', 'waiting_doctor', 'with_doctor', 'waiting_payment', 'completed'];
+  // Set by the server: จัดยาแล้ว → รอดำเนินการ → รอพบแพทย์ → พบแพทย์ → รอชำระเงิน → เสร็จสิ้น (= paid); see visitStatusOf_ in Code.js.
+  var VISIT_STATUS_LABEL = { dispensed: 'จัดยาแล้ว', pending: 'รอดำเนินการ', waiting_doctor: 'รอพบแพทย์', with_doctor: 'พบแพทย์', waiting_payment: 'รอชำระเงิน', completed: 'เสร็จสิ้น' };
+  var VISIT_STATUS_COLOR = { dispensed: 'var(--hover-bg)', pending: 'var(--amber-soft)', waiting_doctor: 'var(--accent-soft)', with_doctor: 'var(--gold-soft)', waiting_payment: 'var(--pink-soft)', completed: 'var(--green-soft)' };
+  // The steps of the board / records (จัดยาแล้ว lives on จัดยา-เบิกยา only).
+  var VISIT_FLOW = ['pending', 'waiting_doctor', 'with_doctor', 'waiting_payment', 'completed'];
   /** The treatment form (บันทึกการรักษา) opens from พบแพทย์ on — before that the record has no treatment content yet. */
   function canEditVisit(s) { s = visitStatusKey(s); return s === 'with_doctor' || s === 'waiting_payment'; }
   function visitStatusKey(s) { return VISIT_STATUS_LABEL[s] ? s : 'dispensed'; } // older ''/'scheduled' records too
@@ -1842,9 +1849,73 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   }
   /** Moves a record one step (to: dispensed | waiting_doctor | waiting_payment) and refreshes what is on screen. */
   function moveVisit(rid, to, from) {
-    // Going in to see the doctor (from รอพบแพทย์): pick which doctor first.
-    if (to === 'with_doctor' && from === 'waiting_doctor') return pickDoctor().then(function (doctorId) { return doctorId ? doMove(rid, to, doctorId) : null; });
+    // จัดยาแล้ว → รอดำเนินการ: the customer's profile is needed and the front creates the ใบ OPD.
+    if (to === 'pending' && from === 'dispensed') return startPending(rid);
+    // Going in to see the doctor (from รอพบแพทย์): pick which doctor first, then print the ใบ OPD and open the draft treatment record.
+    if (to === 'with_doctor' && from === 'waiting_doctor') {
+      return pickDoctor().then(function (doctorId) {
+        return doctorId ? doMove(rid, to, doctorId).then(function (res) { openDoctorDraft(rid); return res; }) : null;
+      });
+    }
     return doMove(rid, to);
+  }
+  /** พบแพทย์: the draft บันทึกการรักษา opens for the doctor, with the ใบ OPD print preview on top of it. */
+  function openDoctorDraft(rid) {
+    editRecordModal(rid);
+    printOpdSheetAction(rid);
+  }
+  /** จัดยาแล้ว → รอดำเนินการ: asks for the customer's profile first when the withdrawal only has a typed name. */
+  function startPending(rid) {
+    return call('getRecord', session.token, rid).then(function (res) {
+      var r = res.data;
+      if (!r.patientId) { openAssignPatient(r, true); return null; }
+      return doStartPending(rid);
+    });
+  }
+  /** Moves the record to รอดำเนินการ and opens its form so the front creates the ใบ OPD (saving it is what creates it). */
+  function doStartPending(rid) {
+    return doMove(rid, 'pending').then(function (res) {
+      toast('success', 'รอดำเนินการ — สร้างใบ OPD แล้วกดบันทึก');
+      editRecordModal(rid);
+      return res;
+    });
+  }
+  /** The profile picker for a record that only has a typed name (รออัพเดท); `thenPending` goes on to รอดำเนินการ afterwards. */
+  function openAssignPatient(r, thenPending) {
+    openModal('assignpatient', { rid: r.id, typedName: r.patientName || '', thenPending: !!thenPending, patientId: '', patientName: '', phone: '', patientNickname: '', _patientQuery: r.patientName || '', _patientSuggest: [] });
+    if (r.patientName) onPatientSuggestSearch(r.patientName);
+  }
+  function assignPatientModalBody() {
+    var d = state.draft;
+    return modalHeader('ใส่ข้อมูลคนไข้') +
+      '<div style="font-size:12.5px;color:var(--text-2);margin:-6px 0 12px">ชื่อที่พิมพ์ไว้ตอนจัดยา: <b>' + esc(d.typedName || '-') + '</b> <span class="tag-badge" style="background:var(--amber-soft)">รออัพเดท</span></div>' +
+      '<div style="margin-bottom:12px">' + searchInputHtml('assignPatientSearch', d._patientQuery, 'ค้นหาคนไข้ (ชื่อ / เบอร์โทร / HN)', 'window.__arich.onPatientSuggestSearch(this.value)') + patientSuggestBox(d._patientSuggest) + '</div>' +
+      (d.patientId ? '<div style="font-size:12px;color:var(--green-dark);margin:-6px 0 10px">เลือก: ' + esc(d.patientName) + ' (' + esc(d.phone) + ')</div>' : '') +
+      '<button class="btn" data-action="assign-new-patient"><span class="ms">person_add</span> สร้างประวัติคนไข้ใหม่</button>' +
+      (d.thenPending ? '<div style="font-size:11.5px;color:var(--muted);margin-top:10px">เมื่อยืนยัน สถานะเปลี่ยนเป็น รอดำเนินการ และเปิดใบ OPD ให้สร้างต่อ</div>' : '') +
+      saveBtn('ยืนยัน');
+  }
+  function saveAssignPatientModal() {
+    var d = state.draft;
+    if (!d.patientId) { toast('error', 'กรุณาเลือกคนไข้ หรือสร้างประวัติคนไข้ใหม่'); return; }
+    finishAssignPatient(d.rid, d.patientId, d.thenPending);
+  }
+  function finishAssignPatient(rid, patientId, thenPending) {
+    call('assignRecordPatient', session.token, rid, patientId).then(function () {
+      closeModal();
+      toast('success', 'บันทึกข้อมูลคนไข้แล้ว');
+      if (thenPending) return doStartPending(rid);
+      afterRecordWrite();
+    });
+  }
+  /** Opens the new-patient form pre-filled from the typed name; saving it assigns the profile to the record. */
+  function assignNewPatient() {
+    var d = state.draft, parts = String(d.typedName || '').trim().split(/\s+/);
+    var ctx = { rid: d.rid, thenPending: d.thenPending };
+    newPatientModal();
+    state.draft.firstName = parts[0] || ''; state.draft.lastName = parts.slice(1).join(' ');
+    state.draft._assign = ctx;
+    render();
   }
   function doMove(rid, to, doctorId) {
     return call('setVisitStatus', session.token, rid, to, doctorId || '').then(function (res) {
@@ -1871,8 +1942,9 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     var acts = [];
     status = visitStatusKey(status);
     if (paid) return acts;
-    if (status === 'dispensed') acts.push({ value: 'move:waiting_doctor', label: 'รอพบแพทย์ (จัดคิว)', icon: 'arrow_forward' });
-    if (status === 'waiting_doctor') acts.push({ value: 'move:with_doctor', label: 'พบแพทย์', icon: 'arrow_forward' }, { value: 'move:dispensed', label: 'ย้อนไปจัดยาแล้ว', icon: 'undo' });
+    if (status === 'dispensed') acts.push({ value: 'move:pending', label: 'รอดำเนินการ (ใส่ข้อมูลคนไข้ + สร้างใบ OPD)', icon: 'arrow_forward' });
+    if (status === 'pending') acts.push({ value: 'move:waiting_doctor', label: 'รอพบแพทย์ (จัดคิว)', icon: 'arrow_forward' }, { value: 'move:dispensed', label: 'ย้อนไปจัดยาแล้ว', icon: 'undo' });
+    if (status === 'waiting_doctor') acts.push({ value: 'move:with_doctor', label: 'พบแพทย์ (พิมพ์ใบ OPD)', icon: 'arrow_forward' }, { value: 'move:pending', label: 'ย้อนไปรอดำเนินการ', icon: 'undo' });
     if (status === 'with_doctor') acts.push({ value: 'move:waiting_payment', label: 'ส่งชำระเงิน (จัดคิว)', icon: 'arrow_forward' }, { value: 'move:waiting_doctor', label: 'ย้อนไปรอพบแพทย์', icon: 'undo' });
     if (status === 'waiting_payment') acts.push({ value: 'move:with_doctor', label: 'ย้อนไปพบแพทย์', icon: 'undo' });
     return acts;
@@ -1908,8 +1980,14 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       opts.push({ value: 'receipt', label: 'พิมพ์ใบเสร็จ', icon: 'print' });
       if (st === 'waiting_payment') opts.push({ value: 'edit', label: 'แก้ไข', icon: 'edit' });
       if (isAdmin()) opts.push({ value: 'delete', label: 'ลบ', icon: 'delete', danger: true });
+    } else if (st === 'pending' || st === 'waiting_doctor') {
+      opts.push({ value: 'edit', label: r.opdCreated ? 'แก้ไขใบ OPD' : 'สร้างใบ OPD', icon: 'edit_note' });
+      if (r.opdCreated) opts.push({ value: 'opd', label: 'พิมพ์ใบ OPD', icon: 'print' });
+      visitMoveActions(st, false).forEach(function (a) { opts.push(a); });
+      opts.push({ value: 'history', label: 'ดูประวัติการรักษา', icon: 'history' });
     } else opts.push({ value: 'history', label: 'ดูประวัติการรักษา', icon: 'history' });
     openPortal(triggerId, opts, function (v) {
+      if (v === 'opd') { printOpdSheetAction(id); return; }
       if (v.indexOf('move:') === 0) moveVisit(id, v.slice(5), visitStatusKey(r.visitStatus));
       else if (v === 'history') openPatientPanel(r.patientId, { recordId: r.id, status: r.visitStatus });
       else if (v === 'receipt') issueReceiptAction(id);
@@ -1973,7 +2051,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         '<button class="btn" data-action="cal-next"><span class="ms">chevron_right</span></button>' +
       '</div>' +
       '<div style="display:flex;gap:12px;margin-bottom:10px;font-size:11px;color:var(--muted)">' +
-        Object.keys(VISIT_STATUS_LABEL).map(function (s) { return '<span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:' + VISIT_STATUS_COLOR[s] + ';margin-right:4px;vertical-align:middle"></span>' + VISIT_STATUS_LABEL[s] + '</span>'; }).join('') +
+        VISIT_FLOW.map(function (s) { return '<span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:' + VISIT_STATUS_COLOR[s] + ';margin-right:4px;vertical-align:middle"></span>' + VISIT_STATUS_LABEL[s] + '</span>'; }).join('') +
       '</div>' +
       '<div style="display:grid;grid-template-columns:repeat(7,1fr)">' + dow + '</div>' +
       '<div class="cal-grid" style="display:grid;grid-template-columns:repeat(7,1fr)">' + cells + '</div>' +
@@ -1992,7 +2070,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     openModal('record', Object.assign({
       date: todayStr(), patientId: '', patientName: '', phone: '', patientNickname: '', serviceCategory: '', detail: '',
       salesId: '', useCanula: false, canulaAmount: 0,
-      amount: 0, otherAmount: 0, status: 'unpaid', visitStatus: 'with_doctor', note: '', receiptNo: '',
+      amount: 0, otherAmount: 0, status: 'unpaid', visitStatus: 'pending', note: '', receiptNo: '',
       opdImageFileId: '',
       _patientQuery: '', _patientSuggest: []
     }, emptyLineItemGroups()));
@@ -2454,6 +2532,9 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   }
 
   var onPatientSuggestSearch = debounce(function (q) {
+    if (state.draft.patientId && state.modal && (state.modal.type === 'medwithdraw' || state.modal.type === 'assignpatient') && q !== state.draft.patientName) {
+      state.draft.patientId = ''; state.draft.patientName = ''; state.draft.phone = ''; // typing again drops the earlier pick
+    }
     state.draft._patientQuery = q;
     if (!q) { state.draft._patientSuggest = []; render(); return; }
     if (state.suggestCache.patients) {
@@ -3339,18 +3420,24 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   // It is the only screen that refreshes by itself.
   setInterval(function () { if (session.token && state.screen === 'board' && !state.modal && !state.portal && !document.hidden) loadBoard(); }, 600000);
   function boardCard(c, st) {
-    var q = st === 'dispensed' ? null : c.queueDoctor;
+    var q = st === 'pending' ? null : c.queueDoctor;
     var tag = function (t, color) { return '<span class="tag-badge" style="background:' + color + ';font-size:10.5px;white-space:nowrap">' + esc(t) + '</span>'; };
     var today = todayStr();
-    var tags = c.carryover && st !== 'waiting_payment' ? tag('ค้างจาก ' + (c.queueDate || c.date), 'var(--red-soft)') : ''; // จัดยาแล้ว and รอชำระเงิน cards carry no date
+    var tags = c.carryover && st !== 'waiting_payment' ? tag('ค้างจาก ' + (c.queueDate || c.date), 'var(--red-soft)') : ''; // รอดำเนินการ and รอชำระเงิน cards carry no date
+    if (st === 'pending' && c.date && c.date < today) tags += tag('จัดยา ' + c.date, 'var(--hover-bg)');
+    if ((st === 'pending' || st === 'waiting_doctor') && !c.opdCreated) tags += tag('ยังไม่มีใบ OPD', 'var(--amber-soft)');
     var btn = function (label, icon, action, arg, primary) {
       return '<button class="btn' + (primary ? ' btn-primary' : '') + '" data-action="' + action + '" data-arg="' + esc(arg) + '" style="padding:5px 9px;font-size:12px"><span class="ms" style="font-size:16px">' + icon + '</span> ' + esc(label) + '</button>';
     };
     var buttons = '';
-    // Front works the board: จัดยาแล้ว → รอพบแพทย์ → พบแพทย์ and รอชำระเงิน → เสร็จสิ้น; the doctor takes พบแพทย์ → รอชำระเงิน
-    // by saving the treatment record (บันทึกการรักษา page), so there is no treatment button here.
-    if (st === 'dispensed') buttons = btn('รอพบแพทย์', 'arrow_forward', 'board-move', c.id + '|waiting_doctor|dispensed', true);
-    else if (st === 'waiting_doctor') buttons = btn('ย้อน', 'undo', 'board-move', c.id + '|dispensed|waiting_doctor') + btn('พบแพทย์', 'arrow_forward', 'board-move', c.id + '|with_doctor|waiting_doctor', true);
+    // Front works the board: รอดำเนินการ (create the ใบ OPD) → รอพบแพทย์ → พบแพทย์ (prints the ใบ OPD) and รอชำระเงิน → เสร็จสิ้น;
+    // the doctor takes พบแพทย์ → รอชำระเงิน by saving the treatment record, so there is no treatment button here.
+    if (st === 'pending') buttons = c.opdCreated
+      ? btn('แก้ไขใบ OPD', 'edit_note', 'board-opd', c.id) + btn('รอพบแพทย์', 'arrow_forward', 'board-move', c.id + '|waiting_doctor|pending', true)
+      : btn('สร้างใบ OPD', 'edit_note', 'board-opd', c.id, true);
+    else if (st === 'waiting_doctor') buttons = btn('ย้อน', 'undo', 'board-move', c.id + '|pending|waiting_doctor') + (c.opdCreated
+      ? btn('พบแพทย์', 'arrow_forward', 'board-move', c.id + '|with_doctor|waiting_doctor', true)
+      : btn('สร้างใบ OPD', 'edit_note', 'board-opd', c.id, true));
     else if (st === 'with_doctor') buttons = btn('ย้อน', 'undo', 'board-move', c.id + '|waiting_doctor|with_doctor');
     else if (st === 'waiting_payment') buttons = btn('ย้อน', 'undo', 'board-move', c.id + '|with_doctor|waiting_payment') + btn('ชำระเงิน', 'payments', 'board-pay', c.id, true);
     else buttons = btn('ใบเสร็จ', 'print', 'issue-receipt', c.id);
@@ -3389,8 +3476,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   function boardTemplate() {
     var B = state.board, d = B.data;
     if (!B.date) B.date = todayStr();
-    var hint = { dispensed: 'รอลูกค้ามา (ทุกวัน)', waiting_doctor: 'ตามลำดับคิวพบแพทย์', with_doctor: 'กำลังพบแพทย์', waiting_payment: 'ตามลำดับคิวชำระเงิน', completed: 'ชำระเงินแล้ว' };
-    var icon = { dispensed: 'medication', waiting_doctor: 'schedule', with_doctor: 'stethoscope', waiting_payment: 'payments', completed: 'task_alt' };
+    var hint = { pending: 'สร้างใบ OPD ก่อนเข้าคิว', waiting_doctor: 'ตามลำดับคิวพบแพทย์', with_doctor: 'กำลังพบแพทย์', waiting_payment: 'ตามลำดับคิวชำระเงิน', completed: 'ชำระเงินแล้ว' };
+    var icon = { pending: 'assignment', waiting_doctor: 'schedule', with_doctor: 'stethoscope', waiting_payment: 'payments', completed: 'task_alt' };
     var head = '<div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">' +
       '<input type="date" id="boardDate" value="' + esc(B.date) + '" style="' + inputStyle + ';width:auto" data-action-change="board-date">' +
       (B.date !== todayStr() ? '<button class="btn" data-action="board-today">วันนี้</button>' : '') +
@@ -4077,13 +4164,17 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   function wdGroupActions(g) {
     var acts = [];
     var firstRec = g.lines[0] && g.lines[0].recordId;
+    if (g.patientPending && firstRec) acts.push({ value: 'assign:' + firstRec, label: 'ใส่ข้อมูลคนไข้', icon: 'person_add' });
     if (firstRec && g.lines.every(function (w) { return w.recordId === firstRec; })) visitMoveActions(g.visitStatus, g.visitStatus === 'completed').forEach(function (a) { acts.push(Object.assign({}, a, { value: a.value + ':' + firstRec })); });
     var openLine = g.lines.filter(function (w) { return w.recordId && w.recordStatus !== 'completed'; })[0];
+    var openSt = openLine && visitStatusKey(openLine.recordStatus);
     if (openLine && canEditVisit(openLine.recordStatus)) acts.push({ value: 'edit:' + openLine.recordId, label: 'ไปที่บันทึกการรักษา', icon: 'medical_services' });
-    else if (g.lines.some(function (w) { return !w.recordId; })) acts.push({ value: 'new', label: 'บันทึกการรักษา', icon: 'medical_services' });
+    else if (openLine && (openSt === 'pending' || openSt === 'waiting_doctor')) {
+      acts.push({ value: 'edit:' + openLine.recordId, label: 'สร้าง / แก้ไขใบ OPD', icon: 'edit_note' }, { value: 'opd:' + openLine.recordId, label: 'พิมพ์ใบ OPD', icon: 'print' });
+    } else if (g.patientId && g.lines.some(function (w) { return !w.recordId; })) acts.push({ value: 'new', label: 'บันทึกการรักษา', icon: 'medical_services' });
     else if (g.lines[0] && g.lines[0].recordId) acts.push({ value: 'view:' + g.lines[0].recordId, label: 'ดูบันทึกการรักษา', icon: 'visibility' });
     acts.push({ value: 'photos', label: 'รูปยาที่เบิก' + ((g.photoIds || []).length ? ' (' + g.photoIds.length + ')' : ''), icon: 'photo_camera' });
-    if (isAdmin()) g.lines.filter(function (w) { return w.recordStatus === 'dispensed' || w.recordStatus === 'waiting_doctor'; }).forEach(function (w) {
+    if (isAdmin()) g.lines.filter(function (w) { return w.recordStatus === 'dispensed' || w.recordStatus === 'pending' || w.recordStatus === 'waiting_doctor'; }).forEach(function (w) {
       acts.push({ value: 'del:' + w.id, label: 'ลบ ' + w.itemName + ' ×' + w.qty, icon: 'delete', danger: true });
     });
     return acts;
@@ -4096,6 +4187,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     openPortal(triggerId, wdGroupActions(g), function (v) {
       if (v.indexOf('move:') === 0) { var mv = v.split(':'); moveVisit(mv[2], mv[1], g.visitStatus); }
       else if (v === 'photos') openWdPhotos(g);
+      else if (v.indexOf('assign:') === 0) openAssignPatient({ id: v.slice(7), patientName: g.patientName }, false);
+      else if (v.indexOf('opd:') === 0) printOpdSheetAction(v.slice(4));
       else if (v === 'new') withdrawToRecord(g.patientId);
       else if (v.indexOf('edit:') === 0) editRecordModal(v.slice(5));
       else if (v.indexOf('view:') === 0) openRecordPanel(v.slice(5));
@@ -4129,7 +4222,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
             (i ? '' :
               '<td' + rs + ' style="padding:10px 12px">' + esc(g.date) + '</td>' +
               '<td' + rs + '>' + (g.hn ? esc(g.hn) : '<span style="color:var(--muted)">-</span>') + '</td>' +
-              '<td' + rs + '>' + esc(g.patientName) + ' <span style="color:var(--muted)">(' + esc(g.phone) + ')</span>' + (g.note ? '<div style="font-size:11px;color:var(--muted);white-space:normal;max-width:220px">' + esc(g.note) + '</div>' : '') + '</td>' +
+              '<td' + rs + '>' + esc(g.patientName) + (g.patientPending ? ' <span class="tag-badge" style="background:var(--amber-soft);font-size:10.5px">รออัพเดท</span>' : ' <span style="color:var(--muted)">(' + esc(g.phone) + ')</span>') + (g.note ? '<div style="font-size:11px;color:var(--muted);white-space:normal;max-width:220px">' + esc(g.note) + '</div>' : '') + '</td>' +
               '<td' + rs + '>' + (g.salesName ? esc(g.salesName) : '<span style="color:var(--muted)">-</span>') + '</td>') +
             '<td>' + esc(stockLabelById(w.itemId, w.itemName)) + '</td>' +
             '<td style="text-align:right">' + esc(w.qty) + (s && s.unit ? ' ' + esc(s.unit) : '') + '</td>' +
@@ -4155,19 +4248,20 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
             '<th style="' + th + '">วันที่</th><th style="' + th + '">HN</th><th style="' + th + '">ชื่อคนไข้ (เบอร์โทร)</th><th style="' + th + '">ชื่อเซลล์</th><th style="' + th + '">รายการยา</th><th style="' + th + ';text-align:right">จำนวน</th>' +
             (admin ? '<th style="' + th + ';text-align:right">ราคา/หน่วย</th><th style="' + th + ';text-align:right">จำนวนเงินรวม</th>' : '') + '<th style="' + th + '">สถานะ</th><th></th>' +
           '</tr></thead><tbody>' + rows + '</tbody></table></div>', state.withdraw.reloading) + pagerHtml(L, 'withdraw-page') +
-      '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">บันทึกการเบิกแล้ว ระบบสร้างบันทึกการรักษา (สถานะ จัดยาแล้ว) ให้ — ไปเพิ่มหัตถการ / รายการอื่นๆ และระบุจำนวนที่ใช้/ฝาก ที่หน้าบันทึกการรักษา แล้วกดเสร็จสิ้น</div>';
+      '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">บันทึกการเบิกแล้วสถานะ จัดยาแล้ว — เปลี่ยนเป็น รอดำเนินการ (ใส่ข้อมูลคนไข้ + สร้างใบ OPD) ได้ที่ปุ่มจัดการ · ไม่ทราบชื่อคนไข้พิมพ์ชื่อไว้ก่อน จะแสดง "รออัพเดท"</div>';
   }
   /** "บันทึกการรักษา" from a waiting withdrawal row: a new record for that patient, which pulls in their waiting lines. */
   function withdrawToRecord(patientId) {
     var p = (state.suggestCache.patients || []).filter(function (x) { return x.id === patientId; })[0];
     if (p) { newRecordModalForPatient(p); return; }
+    if (!patientId) return;
     call('getPatient', session.token, patientId).then(function (res) { newRecordModalForPatient(res.data); });
   }
 
   /* ---- สร้างรายการเบิกยา: one patient + sales, several medicine lines ---- */
   function newWithdrawModal() {
     openModal('medwithdraw', { date: todayStr(), patientId: '', patientName: '', phone: '', salesId: '', note: '',
-      lines: [{ name: '', qty: 1 }], photoIds: [], _patientQuery: '', _patientSuggest: [] });
+      lines: [{ loc: 'A', name: '', qty: 1 }], photoIds: [], _patientQuery: '', _patientSuggest: [] });
   }
 
   /* ---- รูปยาที่เบิก: up to WD_PHOTO_MAX photos per จัดยา-เบิกยา save. In the new-withdrawal
@@ -4252,11 +4346,13 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       '<div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn" data-action="close-modal">ปิด</button></div>';
   }
   function withdrawModalBody() {
-    var d = state.draft;
+    var d = state.draft, typed = String(d._patientQuery || '').trim();
     var salesOpts = [{ value: '', label: '— เลือกเซลล์ —' }].concat((state.master.sales || []).map(function (x) { return { value: x.id, label: x.name }; }));
     var lines = d.lines.map(function (l, i) {
       return '<div style="display:grid;grid-template-columns:minmax(0,1fr) 100px 40px;gap:8px;align-items:start;margin-bottom:6px">' +
-        '<div><input type="text" id="wdMed' + i + '" data-med-pick="medicine" autocomplete="off" placeholder="เลือกยาจากสต๊อก" value="' + esc(l.name) + '" data-bind="lines.' + i + '.name" style="' + inputStyle + '">' +
+        '<div><div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:6px">' +
+          bindSelect('lines.' + i + '.loc', [{ value: 'A', label: stockName('A') }, { value: 'B', label: stockName('B') }]) +
+          '<input type="text" id="wdMed' + i + '" data-med-pick="medicine" data-med-loc="' + esc(l.loc || 'A') + '" autocomplete="off" placeholder="เลือกยาจาก ' + esc(stockName(l.loc || 'A')) + '" value="' + esc(l.name) + '" data-bind="lines.' + i + '.name" style="' + inputStyle + '"></div>' +
           '<div id="wdCap' + i + '" style="font-size:11px;color:var(--muted);margin-top:3px;min-height:14px">' + withdrawLineCaption(l) + '</div></div>' +
         '<div><input type="number" min="0" step="any" value="' + esc(l.qty) + '" data-bind="lines.' + i + '.qty" style="' + inputStyle + '" placeholder="จำนวน"></div>' +
         '<button class="btn" data-action="remove-withdraw-line" data-arg="' + i + '" style="padding:8px 10px"><span class="ms">close</span></button>' +
@@ -4264,7 +4360,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     }).join('');
     return modalHeader('จัดยา-เบิกยา') +
       '<div style="margin-bottom:12px">' + searchInputHtml('wdPatientSearch', d._patientQuery, 'ค้นหาคนไข้ (ชื่อ / เบอร์โทร)', 'window.__arich.onPatientSuggestSearch(this.value)') + patientSuggestBox(d._patientSuggest) + '</div>' +
-      (d.patientId ? '<div style="font-size:12px;color:var(--green-dark);margin:-6px 0 10px">เลือก: ' + esc(d.patientName) + ' (' + esc(d.phone) + ')</div>' : '') +
+      (d.patientId ? '<div style="font-size:12px;color:var(--green-dark);margin:-6px 0 10px">เลือก: ' + esc(d.patientName) + ' (' + esc(d.phone) + ')</div>'
+        : (typed ? '<div style="font-size:12px;color:var(--amber-dark,var(--muted));margin:-6px 0 10px">ไม่ได้เลือกจากรายชื่อ — บันทึกเป็นชื่อ "' + esc(typed) + '" <span class="tag-badge" style="background:var(--amber-soft)">รออัพเดท</span> (ใส่ข้อมูลคนไข้ภายหลังก่อนเปลี่ยนเป็นรอดำเนินการ)</div>' : '')) +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">' +
         field('วันที่', bindInput('date', 'date')) + field('ชื่อเซลล์', bindSelect('salesId', salesOpts), true) +
       '</div>' +
@@ -4273,32 +4370,33 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       '<button class="btn" data-action="add-withdraw-line" style="margin-bottom:12px"><span class="ms">add</span> เพิ่มรายการยา</button>' +
       wdPhotoBlock(d) +
       field('หมายเหตุ', bindTextarea('note', 2)) +
-      '<div style="font-size:11.5px;color:var(--muted);margin-top:-4px">ตัดสต๊อกยาตามจำนวนที่เบิก · ระบบสร้างบันทึกการรักษา (สถานะ จัดยาแล้ว) ให้ไปเพิ่มหัตถการ / รายการอื่นๆ ต่อ</div>' +
+      '<div style="font-size:11.5px;color:var(--muted);margin-top:-4px">ตัดสต๊อกยาตามจำนวนที่เบิก (เลือก Stock ของยาแต่ละรายการ) · สถานะ จัดยาแล้ว — เปลี่ยนเป็น รอดำเนินการ เมื่อมีข้อมูลคนไข้</div>' +
       saveBtn();
   }
   /** Under a withdraw line: its unit — patched in place while typing (see the input listener). */
   function withdrawLineCaption(l) {
-    var id = stockItemIdByName(l.name);
+    var id = stockItemIdByName(l.name, l.loc);
     if (!id) return String(l.name || '').trim() ? '<span style="color:var(--red-dark)">เลือกยาจากรายการสต๊อก</span>' : '';
     var s = medicineStockItem(id);
     return esc(s && s.unit ? s.unit : '');
   }
   /** Medicine stock id for an exact name match, or ''. */
-  function stockItemIdByName(name) {
-    var s = stockItemByPickText('medicine', name);
+  function stockItemIdByName(name, loc) {
+    var t = String(name || '').trim();
+    var s = loc ? stockItemsOfType('medicine', loc).filter(function (x) { return x.name === t || (x.label || x.name) === t; })[0] : stockItemByPickText('medicine', name);
     return s ? s.id : '';
   }
   function saveWithdrawModal() {
-    var d = state.draft;
-    if (!d.patientId) { toast('error', 'กรุณาเลือกคนไข้'); return; }
+    var d = state.draft, typedName = String(d._patientQuery || '').trim();
+    if (!d.patientId && !typedName) { toast('error', 'กรุณาเลือกคนไข้ หรือพิมพ์ชื่อคนไข้'); return; }
     if (!d.salesId) { toast('error', 'กรุณาเลือกชื่อเซลล์'); return; }
     var lines = d.lines.filter(function (l) { return String(l.name || '').trim(); });
     if (!lines.length) { toast('error', 'กรุณาเลือกยาอย่างน้อย 1 รายการ'); return; }
-    var bad = lines.filter(function (l) { return !stockItemIdByName(l.name); })[0];
-    if (bad) { toast('error', 'ไม่พบ "' + bad.name + '" ในสต๊อกยา กรุณาเลือกจากรายการ'); return; }
+    var bad = lines.filter(function (l) { return !stockItemIdByName(l.name, l.loc); })[0];
+    if (bad) { toast('error', 'ไม่พบ "' + bad.name + '" ใน ' + stockName(bad.loc || 'A') + ' กรุณาเลือกจากรายการ'); return; }
     call('saveMedWithdrawal', session.token, {
-      date: d.date, patientId: d.patientId, salesId: d.salesId, note: d.note, photoFileIds: d.photoIds || [],
-      lines: lines.map(function (l) { return { itemId: stockItemIdByName(l.name), qty: l.qty }; })
+      date: d.date, patientId: d.patientId, patientName: d.patientId ? '' : typedName, salesId: d.salesId, note: d.note, photoFileIds: d.photoIds || [],
+      lines: lines.map(function (l) { return { itemId: stockItemIdByName(l.name, l.loc), qty: l.qty, loc: l.loc || 'A' }; })
     }).then(function (res) {
       var recordId = res.data && res.data.recordId;
       closeModal();
@@ -4307,10 +4405,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       if (state.stock.list) loadStock();
       if (state.records.list) loadRecords();
       if (state.records.calData) loadCalendar();
-      // Next step of the flow: the บันทึกการรักษา this opened (สถานะ จัดยาแล้ว).
-      Swal.fire({ icon: 'success', title: 'บันทึกการเบิกยาแล้ว', text: 'สถานะ จัดยาแล้ว — ไปเพิ่มหัตถการ / รายการอื่นๆ ที่บันทึกการรักษาต่อเลยไหม?', showCancelButton: true, confirmButtonText: 'บันทึกการรักษา', cancelButtonText: 'ภายหลัง' }).then(function (r) {
-        if (r.isConfirmed && recordId) editRecordModal(recordId);
-      });
+      toast('success', 'บันทึกการเบิกยาแล้ว — สถานะ จัดยาแล้ว' + (d.patientId ? '' : ' (รออัพเดทข้อมูลคนไข้)'));
     });
   }
   function deleteWithdrawConfirm(id) {
@@ -5646,6 +5741,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       case 'stocklogentry': return stockLogEntryModalBody();
       case 'stockadjust': return stockAdjustModalBody();
       case 'medwithdraw': return withdrawModalBody();
+      case 'assignpatient': return assignPatientModalBody();
       case 'wdphotos': return wdPhotosModalBody();
       case 'payment': return paymentModalBody();
       case 'deposit': return depositModalBody();
@@ -5671,6 +5767,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       case 'stocklogentry': return saveStockLogEntryModal();
       case 'stockadjust': return saveStockAdjustModal();
       case 'medwithdraw': return saveWithdrawModal();
+      case 'assignpatient': return saveAssignPatientModal();
       case 'payment': return savePaymentModal();
       case 'deposit': return saveDepositModal();
       case 'procedure': return saveProcedureModal();
@@ -5692,8 +5789,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   // Records list filter: สถานะการรักษา (VisitStatus), not the payment status.
   var wdSalesOptions = function () { return [{ value: '', label: 'เซลล์ทั้งหมด' }].concat((state.master.sales || []).map(function (x) { return { value: x.id, label: x.name }; })); };
   // บันทึกการรักษา lists the customers who have arrived (รอพบแพทย์ onwards); จัดยาแล้ว belongs to จัดยา-เบิกยา / the board.
-  var recordsStatusOptions = function () { return [{ value: '', label: 'สถานะการรักษาทั้งหมด' }].concat(VISIT_FLOW.slice(1).map(function (v) { return { value: v, label: VISIT_STATUS_LABEL[v] }; })); };
-  var statusFilterOptions = function () { return [{ value: '', label: 'สถานะการรักษาทั้งหมด' }].concat(VISIT_FLOW.map(function (v) { return { value: v, label: VISIT_STATUS_LABEL[v] }; })); };
+  var recordsStatusOptions = function () { return [{ value: '', label: 'สถานะการรักษาทั้งหมด' }].concat(VISIT_FLOW.map(function (v) { return { value: v, label: VISIT_STATUS_LABEL[v] }; })); };
+  var statusFilterOptions = function () { return [{ value: '', label: 'สถานะการรักษาทั้งหมด' }].concat(['dispensed'].concat(VISIT_FLOW).map(function (v) { return { value: v, label: VISIT_STATUS_LABEL[v] }; })); };
   var stockCatFilterOptions = function () { return [{ value: '', label: 'หมวดหมู่ทั้งหมด' }].concat((state.master.stockCategories || []).map(function (c) { return { value: c.name, label: c.name }; })); };
 
   document.addEventListener('click', function (ev) {
@@ -5784,6 +5881,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         break;
       }
       case 'patient-panel-treat': { var treatId = arg; closePatientPanel(); editRecordModal(treatId); break; }
+      case 'board-opd': editRecordModal(arg); break;
+      case 'assign-new-patient': assignNewPatient(); break;
       case 'board-move': { var bm = arg.split('|'); moveVisit(bm[0], bm[1], bm[2]); break; }
       case 'board-pay': payRecordAction(arg); break;
       case 'board-refresh': loadBoard(); break;
@@ -5909,7 +6008,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       case 'close-pdf-preview': case 'close-pdf-preview-bg': if (ev.target === el || action === 'close-pdf-preview') closePdfPreview(); break;
       case 'delete-withdraw': deleteWithdrawConfirm(arg); break;
       case 'withdraw-page': state.withdraw.page = Number(arg); render(); loadWithdrawals(); break;
-      case 'add-withdraw-line': state.draft.lines.push({ name: '', qty: 1 }); render(); break;
+      case 'add-withdraw-line': state.draft.lines.push({ loc: (state.draft.lines[state.draft.lines.length - 1] || {}).loc || 'A', name: '', qty: 1 }); render(); break;
       case 'remove-withdraw-line': state.draft.lines.splice(Number(arg), 1); render(); break;
       case 'new-expense': newExpenseModal(); break;
       case 'edit-expense': editExpenseModal(arg); break;
@@ -6027,6 +6126,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       return;
     }
     // จัดยา-เบิกยา: a line's name/qty changes its unit + ราคาขาย caption — patched in place, no render.
+    var wdLoc = state.modal && state.modal.type === 'medwithdraw' && bindPath.match(/^lines\.(\d+)\.loc$/);
+    if (wdLoc) { var wl = state.draft.lines[Number(wdLoc[1])]; wl.name = ''; render(); return; }
     var wdLine = state.modal && state.modal.type === 'medwithdraw' && bindPath.match(/^lines\.(\d+)\.(name|qty)$/);
     if (wdLine) {
       var wdCap = document.getElementById('wdCap' + wdLine[1]);
