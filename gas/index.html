@@ -1859,9 +1859,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     }
     return doMove(rid, to);
   }
-  /** พบแพทย์: the draft บันทึกการรักษา opens for the doctor, with the ใบ OPD print preview on top of it. */
+  /** พบแพทย์: the ใบ OPD preview, ready to print for the doctor. */
   function openDoctorDraft(rid) {
-    editRecordModal(rid);
     printOpdSheetAction(rid);
   }
   /** จัดยาแล้ว → รอดำเนินการ: asks for the customer's profile first when the withdrawal only has a typed name. */
@@ -1872,11 +1871,10 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       return doStartPending(rid);
     });
   }
-  /** Moves the record to รอดำเนินการ and opens its form so the front creates the ใบ OPD (saving it is what creates it). */
+  /** Moves the record to รอดำเนินการ; the front then creates the ใบ OPD from its card on ระหว่างดำเนินการ. */
   function doStartPending(rid) {
     return doMove(rid, 'pending').then(function (res) {
-      toast('success', 'รอดำเนินการ — สร้างใบ OPD แล้วกดบันทึก');
-      editRecordModal(rid);
+      toast('success', 'เปลี่ยนเป็นรอดำเนินการแล้ว — สร้างใบ OPD ได้ที่หน้า ระหว่างดำเนินการ');
       return res;
     });
   }
@@ -1892,7 +1890,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       '<div style="margin-bottom:12px">' + searchInputHtml('assignPatientSearch', d._patientQuery, 'ค้นหาคนไข้ (ชื่อ / เบอร์โทร / HN)', 'window.__arich.onPatientSuggestSearch(this.value)') + patientSuggestBox(d._patientSuggest) + '</div>' +
       (d.patientId ? '<div style="font-size:12px;color:var(--green-dark);margin:-6px 0 10px">เลือก: ' + esc(d.patientName) + ' (' + esc(d.phone) + ')</div>' : '') +
       '<button class="btn" data-action="assign-new-patient"><span class="ms">person_add</span> สร้างประวัติคนไข้ใหม่</button>' +
-      (d.thenPending ? '<div style="font-size:11.5px;color:var(--muted);margin-top:10px">เมื่อยืนยัน สถานะเปลี่ยนเป็น รอดำเนินการ และเปิดใบ OPD ให้สร้างต่อ</div>' : '') +
+      (d.thenPending ? '<div style="font-size:11.5px;color:var(--muted);margin-top:10px">เมื่อยืนยัน สถานะเปลี่ยนเป็น รอดำเนินการ (สร้างใบ OPD ต่อที่หน้า ระหว่างดำเนินการ)</div>' : '') +
       saveBtn('ยืนยัน');
   }
   function saveAssignPatientModal() {
@@ -1942,9 +1940,9 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     var acts = [];
     status = visitStatusKey(status);
     if (paid) return acts;
-    if (status === 'dispensed') acts.push({ value: 'move:pending', label: 'รอดำเนินการ (ใส่ข้อมูลคนไข้ + สร้างใบ OPD)', icon: 'arrow_forward' });
+    if (status === 'dispensed') acts.push({ value: 'move:pending', label: 'เปลี่ยนสถานะเป็น รอดำเนินการ', icon: 'arrow_forward' });
     if (status === 'pending') acts.push({ value: 'move:waiting_doctor', label: 'รอพบแพทย์ (จัดคิว)', icon: 'arrow_forward' }, { value: 'move:dispensed', label: 'ย้อนไปจัดยาแล้ว', icon: 'undo' });
-    if (status === 'waiting_doctor') acts.push({ value: 'move:with_doctor', label: 'พบแพทย์ (พิมพ์ใบ OPD)', icon: 'arrow_forward' }, { value: 'move:pending', label: 'ย้อนไปรอดำเนินการ', icon: 'undo' });
+    if (status === 'waiting_doctor') acts.push({ value: 'move:with_doctor', label: 'พบแพทย์ (เลือกแพทย์ + พิมพ์ใบ OPD)', icon: 'arrow_forward' }, { value: 'move:pending', label: 'ย้อนไปรอดำเนินการ', icon: 'undo' });
     if (status === 'with_doctor') acts.push({ value: 'move:waiting_payment', label: 'ส่งชำระเงิน (จัดคิว)', icon: 'arrow_forward' }, { value: 'move:waiting_doctor', label: 'ย้อนไปรอพบแพทย์', icon: 'undo' });
     if (status === 'waiting_payment') acts.push({ value: 'move:with_doctor', label: 'ย้อนไปพบแพทย์', icon: 'undo' });
     return acts;
@@ -1975,11 +1973,12 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     if (state.portal && state.portal.triggerId === triggerId) { closePortal(); return; } // second click closes
     // The menu follows the step: รอพบแพทย์ = history only; พบแพทย์ = write the treatment / send back; รอชำระเงิน = receipt, edit, delete; เสร็จสิ้น = receipt, delete.
     var st = visitStatusKey(r.visitStatus), opts = [];
-    if (st === 'with_doctor') opts.push({ value: 'edit', label: 'สร้างบันทึกการรักษา', icon: 'edit_note' }, { value: 'move:waiting_doctor', label: 'ย้อนไปรอพบแพทย์', icon: 'undo' });
+    // รอชำระเงิน: แก้ไข · ดูใบ OPD · ดูใบเสร็จ — เสร็จสิ้น: แก้ไข (admin) · ดูใบ OPD · ดูใบเสร็จ · ลบ (admin).
+    if (st === 'with_doctor') opts.push({ value: 'edit', label: 'ดำเนินการ', icon: 'edit_note' }, { value: 'opd', label: 'ดูใบ OPD', icon: 'description' }, { value: 'move:waiting_doctor', label: 'ย้อนไปรอพบแพทย์', icon: 'undo' });
     else if (st === 'waiting_payment' || st === 'completed') {
-      opts.push({ value: 'receipt', label: 'พิมพ์ใบเสร็จ', icon: 'print' });
-      if (st === 'waiting_payment') opts.push({ value: 'edit', label: 'แก้ไข', icon: 'edit' });
-      if (isAdmin()) opts.push({ value: 'delete', label: 'ลบ', icon: 'delete', danger: true });
+      if (st === 'waiting_payment' || isAdmin()) opts.push({ value: 'edit', label: 'แก้ไข', icon: 'edit' });
+      opts.push({ value: 'opd', label: 'ดูใบ OPD', icon: 'description' }, { value: 'receipt', label: 'ดูใบเสร็จ', icon: 'receipt_long' });
+      if (st === 'completed' && isAdmin()) opts.push({ value: 'delete', label: 'ลบ', icon: 'delete', danger: true });
     } else if (st === 'pending' || st === 'waiting_doctor') {
       opts.push({ value: 'edit', label: r.opdCreated ? 'แก้ไขใบ OPD' : 'สร้างใบ OPD', icon: 'edit_note' });
       if (r.opdCreated) opts.push({ value: 'opd', label: 'พิมพ์ใบ OPD', icon: 'print' });
@@ -2292,7 +2291,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     var body = '' +
       '<div class="day-summary-header" style="display:flex;justify-content:space-between;align-items:flex-start;flex:none">' +
         '<div><div style="font-size:16px;font-weight:700">' + esc(r.patientName) + '</div>' +
-        '<div style="font-size:12px;opacity:.85;margin-top:2px">' + (r.hn ? 'HN ' + esc(r.hn) + ' · ' : '') + esc(r.phone) + ' · ' + esc(r.date) + '</div></div>' +
+        '<div style="font-size:12px;opacity:.85;margin-top:2px">' + (r.hn ? 'HN ' + esc(r.hn) + ' · ' : '') + esc(r.phone) + ' · ' + esc(r.date) + '</div>' +
+        '<div style="font-size:12px;opacity:.85;margin-top:2px">เลขที่รายการรักษา ' + esc(r.id) + '</div></div>' +
         '<button data-action="close-record-panel" style="border:none;background:none;cursor:pointer;color:#fff"><span class="ms">close</span></button>' +
       '</div>' +
       '<div style="padding:14px 22px 0;display:flex;gap:6px;flex-wrap:wrap;flex:none">' +
@@ -2303,6 +2303,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
           '<div class="day-summary-section-title">รายละเอียดการรักษา</div>' +
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 16px">' + infoFields + '</div>' +
         '</div>' +
+        editRemarksHtml(r.editRemarks) +
         '<div class="day-summary-section" style="background:var(--accent-soft);border-color:var(--accent-soft);margin-bottom:0">' +
           '<div class="day-summary-section-title" style="color:var(--accent-hover)">รายละเอียดรายได้</div>' +
           '<div style="display:flex;flex-direction:column;gap:6px;font-size:12.5px">' +
@@ -2329,7 +2330,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         '<div style="display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px">' +
           '<button class="btn" data-action="print-opd-sheet" data-arg="' + esc(r.id) + '"><span class="ms">description</span> ใบ OPD (A5)</button>' +
           '<button class="btn" data-action="record-panel-receipt" data-arg="' + esc(r.id) + '"><span class="ms">print</span> ออกใบเสร็จ</button>' +
-          (canEditVisit(r.visitStatus) ? '<button class="btn' + (r.status === 'unpaid' ? '' : ' btn-primary') + '" data-action="record-panel-edit" data-arg="' + esc(r.id) + '">แก้ไข</button>' : '') +
+          (canEditVisit(r.visitStatus) || (visitStatusKey(r.visitStatus) === 'completed' && isAdmin()) ? '<button class="btn' + (r.status === 'unpaid' ? '' : ' btn-primary') + '" data-action="record-panel-edit" data-arg="' + esc(r.id) + '">แก้ไข</button>' : '') +
         '</div>' +
         '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">' +
           '<button class="btn" data-action="close-record-panel">ปิด</button>' +
@@ -2509,7 +2510,9 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         daySummaryItem('cash', 'ยอดชำระทั้งหมด', dayMoney(s.totalCollected),
           dayPanelRow('เงินสด', dayMoney(s.cashAmount), { tight: true }) +
           dayPanelRow('เงินโอน', dayMoney(s.transferAmount), { tight: true }) +
-          (s.cardAmount ? dayPanelRow('บัตรเครดิต', dayMoney(s.cardAmount), { tight: true }) : '')) +
+          (s.cardAmount ? dayPanelRow('บัตรเครดิต', dayMoney(s.cardAmount), { tight: true }) : '') +
+          (s.salesPayAmount ? dayPanelRow('ชำระผ่านเซลล์', dayMoney(s.salesPayAmount), { tight: true }) : '') +
+          (s.otherPayAmount ? dayPanelRow('อื่นๆ', dayMoney(s.otherPayAmount), { tight: true }) : '')) +
         daySummaryItem('cases', 'จำนวนเคส', s.patientCount + ' คน', null) +
         daySummaryItem('doctor', 'ส่วนแบ่งแพทย์ ทั้งหมด', dayMoney(s.doctorTotal), doctorDetail) +
         daySummaryItem('sales', 'ส่วนแบ่งเซลล์ ทั้งหมด', dayMoney(s.salesTotal), salesDetail) +
@@ -3244,8 +3247,11 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
 
     var header = '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">' +
         '<div><div style="font-size:16px;font-weight:700">' + esc(d.id ? 'แก้ไขบันทึกการรักษา' : 'บันทึกการรักษาใหม่') + '</div>' +
+        '<div style="font-size:12.5px;color:var(--text-2);margin-top:3px">เลขที่รายการรักษา <b>' + (d.id ? esc(d.id) : '<span style="color:var(--muted);font-weight:400">สร้างอัตโนมัติเมื่อบันทึก</span>') + '</b></div>' +
         '<div style="font-size:12px;color:var(--muted);margin-top:4px;display:flex;gap:6px;align-items:center">' + (d.status === 'cancelled' ? statusBadge(d.status) : '') + visitStatusBadge(d.visitStatus, d) + (d.receiptNo ? 'เลขที่ใบเสร็จ ' + esc(d.receiptNo) : 'ยังไม่ออกใบเสร็จ') + '</div></div>' +
-        '<button data-action="close-modal" style="border:none;background:none;cursor:pointer"><span class="ms">close</span></button></div>';
+        '<button data-action="close-modal" style="border:none;background:none;cursor:pointer"><span class="ms">close</span></button></div>' +
+      editRemarksHtml(d.editRemarks) +
+      (d.treated ? '<div style="font-size:11.5px;color:var(--amber-dark,var(--muted));margin:-8px 0 12px"><span class="ms" style="font-size:14px;vertical-align:middle">info</span> บันทึกการรักษานี้สร้างแล้ว — การแก้ไขต้องระบุหมายเหตุ</div>' : '');
 
     var sharePreview = '<div id="sharePreviewBox" style="background:var(--hover-bg);border-radius:var(--r-sm);padding:12px 14px;margin-bottom:14px;font-size:12.5px;display:flex;flex-direction:column;gap:5px">' +
         sharePreviewInnerHtml(d) +
@@ -3355,12 +3361,33 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     '</div>';
   }
 
-  /** complete: save and move to รอชำระเงิน. thenPay: open ชำระเงิน afterwards. */
+  /** The edits of a treatment record after it was made (หมายเหตุการแก้ไข), newest first. */
+  function editRemarksHtml(list) {
+    if (!list || !list.length) return '';
+    return '<div style="border:1px dashed var(--border);border-radius:var(--r-sm);padding:8px 12px;margin-bottom:14px;font-size:12px">' +
+      '<div style="font-weight:700;color:var(--text-2);margin-bottom:4px"><span class="ms" style="font-size:15px;vertical-align:middle">history_edu</span> หมายเหตุการแก้ไข</div>' +
+      list.slice().reverse().map(function (x) {
+        return '<div style="padding:3px 0;border-top:1px solid var(--border-lighter,var(--border))"><span style="color:var(--muted)">' + esc(x.at) + ' · ' + esc(x.by) + '</span><div style="white-space:pre-wrap">' + esc(x.remark) + '</div></div>';
+      }).join('') + '</div>';
+  }
+  /** complete: save and move to รอชำระเงิน. thenPay: open ชำระเงิน afterwards. A record whose treatment was already made asks why it changed. */
   function saveRecordModal(thenPay, complete) {
     if (!state.draft.patientId) { toast('error', 'กรุณาเลือกคนไข้'); return; }
-    var payload = Object.assign({}, state.draft, { complete: !!complete });
+    if (state.draft.treated && state.draft._editRemark == null) {
+      Swal.fire({
+        title: 'หมายเหตุการแก้ไข', input: 'textarea', inputPlaceholder: 'ระบุสิ่งที่แก้ไข / เหตุผล',
+        showCancelButton: true, confirmButtonText: 'บันทึก', cancelButtonText: 'ยกเลิก',
+        inputValidator: function (v) { return String(v || '').trim() ? null : 'กรุณาระบุหมายเหตุการแก้ไข'; }
+      }).then(function (r) {
+        if (!r.isConfirmed || !state.draft) return;
+        state.draft._editRemark = String(r.value).trim();
+        saveRecordModal(thenPay, complete);
+      });
+      return;
+    }
+    var payload = Object.assign({}, state.draft, { complete: !!complete, editRemark: state.draft._editRemark || '' });
     Object.keys(payload).forEach(function (k) { if (k.charAt(0) === '_') delete payload[k]; }); // client-only (_patientQuery, _deposits, ...)
-    call('saveRecord', session.token, payload).then(function (res) {
+    call('saveRecord', session.token, payload).catch(function (e) { if (state.draft) state.draft._editRemark = null; throw e; }).then(function (res) {
       if (complete && res.data && state.notify.known) state.notify.known[res.data.id] = true; // our own move to รอชำระเงิน is not news to us
       toast('success', 'บันทึกข้อมูลการรักษาแล้ว'); closeModal(); refreshStockSuggestCache();
       // Round 12 item 1.3: refresh whichever Records view is on screen — the
@@ -3370,8 +3397,6 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       afterRecordWrite();
       if (state.stock.list) loadStock();
       if (thenPay && res.data) openPaymentModal(res.data);
-      // "บันทึกการรักษา → รอชำระเงิน" ends with the ใบ OPD (A5) preview, ready to print.
-      if (complete && res.data) printOpdSheetAction(res.data.id);
     });
   }
   /** Refreshes everything a record save/payment can change that is on screen. */
@@ -3502,8 +3527,25 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   function payRecordAction(id) {
     call('getRecord', session.token, id).then(function (res) { openPaymentModal(res.data); });
   }
+  var PAY_BASIC = ['เงินสด', 'บัตรเครดิต', 'โอนเงิน'];
+  /** วิธีชำระเงิน is stored as one text: เงินสด / บัตรเครดิต / โอนเงิน / "ชำระผ่านเซลล์ (ชื่อเซลล์)" / "อื่นๆ (ระบุ)". */
   function openPaymentModal(rec) {
-    openModal('payment', { id: rec.id, rec: rec, paymentMethod: rec.paymentMethod || 'เงินสด', status: rec.status === 'unpaid' ? 'paid' : rec.status, printReceipt: true });
+    var pm = rec.paymentMethod || 'เงินสด', kind = pm, salesId = rec.salesId || '', other = '';
+    var m = /^(ชำระผ่านเซลล์|อื่นๆ) \((.*)\)$/.exec(pm);
+    if (m) {
+      kind = m[1];
+      if (kind === 'อื่นๆ') other = m[2];
+      else salesId = ((state.master.sales || []).filter(function (x) { return x.name === m[2]; })[0] || {}).id || salesId;
+    } else if (PAY_BASIC.indexOf(pm) < 0) { kind = 'อื่นๆ'; other = pm; }
+    openModal('payment', { id: rec.id, rec: rec, payKind: kind, paySalesId: salesId, payOther: other, status: rec.status === 'unpaid' ? 'paid' : rec.status, printReceipt: true });
+  }
+  function paymentMethodText(d) {
+    if (d.payKind === 'ชำระผ่านเซลล์') {
+      var s = (state.master.sales || []).filter(function (x) { return x.id === d.paySalesId; })[0];
+      return s ? 'ชำระผ่านเซลล์ (' + s.name + ')' : '';
+    }
+    if (d.payKind === 'อื่นๆ') return String(d.payOther || '').trim() ? 'อื่นๆ (' + String(d.payOther).trim() + ')' : '';
+    return d.payKind;
   }
   function paymentModalBody() {
     var d = state.draft, r = d.rec;
@@ -3519,7 +3561,10 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     if (r.medicineAmount) lines += row('ค่ายา', r.medicineAmount) + (r.medicineItems || []).map(function (m) { return row((m.name || 'ยา') + (m.qtyDispensed ? ' ×' + m.qtyDispensed : ''), m.amount, true); }).join('');
     if (r.useCanula && r.canulaAmount) lines += row('Canula (เข็มทู่)', r.canulaAmount);
     if (r.otherAmount) lines += row('รายการอื่นๆ', r.otherAmount) + (r.otherItems || []).map(function (o) { return row(o.label || 'อื่นๆ', o.amount, true); }).join('');
-    var payOpts = ['เงินสด', 'บัตรเครดิต', 'โอนเงิน'].map(function (p) { return { value: p, label: p }; });
+    var payOpts = PAY_BASIC.concat(['ชำระผ่านเซลล์', 'อื่นๆ']).map(function (p) { return { value: p, label: p === 'ชำระผ่านเซลล์' || p === 'อื่นๆ' ? p + ' (ระบุ)' : p }; });
+    var salesOpts = [{ value: '', label: '— เลือกเซลล์ —' }].concat((state.master.sales || []).map(function (x) { return { value: x.id, label: x.name }; }));
+    var payDetail = d.payKind === 'ชำระผ่านเซลล์' ? field('ชำระผ่านเซลล์', bindSelect('paySalesId', salesOpts), true)
+      : d.payKind === 'อื่นๆ' ? field('ระบุวิธีชำระเงิน', bindInput('payOther', 'text', 'placeholder="เช่น บัตรกำนัล, ผ่อนชำระ"'), true) : '';
     var statusOpts = [{ value: 'paid', label: 'ชำระแล้ว' }, { value: 'unpaid', label: 'รอชำระ' }, { value: 'cancelled', label: 'ยกเลิก' }];
     return modalHeader('ชำระเงิน') +
       '<div style="font-size:13px;margin:-8px 0 12px;color:var(--text-2)">' + esc(r.patientName) + ' · ' + esc(r.date) + (r.receiptNo ? ' · ใบเสร็จ ' + esc(r.receiptNo) : '') + '</div>' +
@@ -3528,15 +3573,18 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         '<div style="display:flex;justify-content:space-between;align-items:center;border-top:1px dashed var(--muted-4);margin-top:6px;padding-top:8px;font-weight:700;font-size:15px;color:var(--accent-hover)"><span>ยอดชำระ</span><span>' + money(r.totalCollected) + '</span></div>' +
       '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">' +
-        field('วิธีการชำระเงิน', bindSelect('paymentMethod', payOpts)) +
+        field('วิธีการชำระเงิน', bindSelect('payKind', payOpts)) +
         field('สถานะการชำระเงิน', bindSelect('status', statusOpts)) +
       '</div>' +
+      (payDetail ? '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">' + payDetail + '</div>' : '') +
       '<div style="display:flex;align-items:center;gap:8px">' + bindInput('printReceipt', 'checkbox') + '<label style="font-size:13px">พิมพ์ใบเสร็จหลังบันทึก (เมื่อชำระแล้ว)</label></div>' +
       saveBtn('ยืนยัน');
   }
   function savePaymentModal() {
     var d = state.draft;
-    call('payRecord', session.token, d.id, { status: d.status, paymentMethod: d.paymentMethod }).then(function () {
+    var method = paymentMethodText(d);
+    if (d.status === 'paid' && !method) { toast('error', d.payKind === 'ชำระผ่านเซลล์' ? 'กรุณาเลือกเซลล์ที่รับชำระ' : 'กรุณาระบุวิธีชำระเงิน'); return; }
+    call('payRecord', session.token, d.id, { status: d.status, paymentMethod: method }).then(function () {
       toast('success', d.status === 'paid' ? 'บันทึกการชำระเงินแล้ว' : 'บันทึกสถานะแล้ว');
       closeModal();
       afterRecordWrite();
@@ -4163,12 +4211,13 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     var acts = [];
     var firstRec = g.lines[0] && g.lines[0].recordId;
     if (g.patientPending && firstRec) acts.push({ value: 'assign:' + firstRec, label: 'ใส่ข้อมูลคนไข้', icon: 'person_add' });
-    if (firstRec && g.lines.every(function (w) { return w.recordId === firstRec; })) visitMoveActions(g.visitStatus, g.visitStatus === 'completed').forEach(function (a) { acts.push(Object.assign({}, a, { value: a.value + ':' + firstRec })); });
+    if (!firstRec) firstRec = (g.lines.filter(function (w) { return w.recordId; })[0] || {}).recordId;
+    if (firstRec) visitMoveActions(g.visitStatus, g.visitStatus === 'completed').forEach(function (a) { acts.push(Object.assign({}, a, { value: a.value + ':' + firstRec })); });
     var openLine = g.lines.filter(function (w) { return w.recordId && w.recordStatus !== 'completed'; })[0];
     var openSt = openLine && visitStatusKey(openLine.recordStatus);
     if (openLine && canEditVisit(openLine.recordStatus)) acts.push({ value: 'edit:' + openLine.recordId, label: 'ไปที่บันทึกการรักษา', icon: 'medical_services' });
     else if (openLine && (openSt === 'pending' || openSt === 'waiting_doctor')) {
-      acts.push({ value: 'edit:' + openLine.recordId, label: 'สร้าง / แก้ไขใบ OPD', icon: 'edit_note' }, { value: 'opd:' + openLine.recordId, label: 'พิมพ์ใบ OPD', icon: 'print' });
+      acts.push({ value: 'view:' + openLine.recordId, label: 'ดูบันทึกการรักษา', icon: 'visibility' });
     } else if (g.patientId && g.lines.some(function (w) { return !w.recordId; })) acts.push({ value: 'new', label: 'บันทึกการรักษา', icon: 'medical_services' });
     else if (g.lines[0] && g.lines[0].recordId) acts.push({ value: 'view:' + g.lines[0].recordId, label: 'ดูบันทึกการรักษา', icon: 'visibility' });
     acts.push({ value: 'photos', label: 'รูปยาที่เบิก' + ((g.photoIds || []).length ? ' (' + g.photoIds.length + ')' : ''), icon: 'photo_camera' });
@@ -4246,7 +4295,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
             '<th style="' + th + '">วันที่</th><th style="' + th + '">HN</th><th style="' + th + '">ชื่อคนไข้ (เบอร์โทร)</th><th style="' + th + '">ชื่อเซลล์</th><th style="' + th + '">รายการยา</th><th style="' + th + ';text-align:right">จำนวน</th>' +
             (admin ? '<th style="' + th + ';text-align:right">ราคา/หน่วย</th><th style="' + th + ';text-align:right">จำนวนเงินรวม</th>' : '') + '<th style="' + th + '">สถานะ</th><th></th>' +
           '</tr></thead><tbody>' + rows + '</tbody></table></div>', state.withdraw.reloading) + pagerHtml(L, 'withdraw-page') +
-      '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">บันทึกการเบิกแล้วสถานะ จัดยาแล้ว — เปลี่ยนเป็น รอดำเนินการ (ใส่ข้อมูลคนไข้ + สร้างใบ OPD) ได้ที่ปุ่มจัดการ · ไม่ทราบชื่อคนไข้พิมพ์ชื่อไว้ก่อน จะแสดง "รออัพเดท"</div>';
+      '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">บันทึกการเบิกแล้วสถานะ จัดยาแล้ว — เปลี่ยนเป็น รอดำเนินการ ได้ที่ปุ่มจัดการ (ต้องมีข้อมูลคนไข้) แล้วสร้างใบ OPD ที่หน้า ระหว่างดำเนินการ · ไม่ทราบชื่อคนไข้พิมพ์ชื่อไว้ก่อน จะแสดง "รออัพเดท"</div>';
   }
   /** "บันทึกการรักษา" from a waiting withdrawal row: a new record for that patient, which pulls in their waiting lines. */
   function withdrawToRecord(patientId) {
@@ -6124,6 +6173,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       return;
     }
     // จัดยา-เบิกยา: a line's name/qty changes its unit + ราคาขาย caption — patched in place, no render.
+    if (state.modal && state.modal.type === 'payment' && bindPath === 'payKind') { render(); return; } // shows the เซลล์ / ระบุ field
     var wdLoc = state.modal && state.modal.type === 'medwithdraw' && bindPath.match(/^lines\.(\d+)\.loc$/);
     if (wdLoc) { var wl = state.draft.lines[Number(wdLoc[1])]; wl.name = ''; render(); return; }
     var wdLine = state.modal && state.modal.type === 'medwithdraw' && bindPath.match(/^lines\.(\d+)\.(name|qty)$/);

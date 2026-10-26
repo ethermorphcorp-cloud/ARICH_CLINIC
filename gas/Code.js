@@ -242,10 +242,11 @@ var CONFIG = {
     // VisitStatus (ARICH): 'dispensed' จัดยาแล้ว (only on จัดยา-เบิกยา; the customer may still be unknown:
     // PatientID '' and PatientName = the typed name = "รออัพเดท") → 'pending' รอดำเนินการ (the patient is
     // known and the front creates the ใบ OPD) → 'waiting_doctor' → 'with_doctor' → 'waiting_payment' →
-    // 'completed'. OpdCreatedAt = when the ใบ OPD was first saved; พบแพทย์ needs it.
+    // 'completed'. OpdCreatedAt = when the ใบ OPD was first saved; พบแพทย์ needs it. TreatedAt = when the
+    // treatment record first went to รอชำระเงิน; every later edit keeps a remark in EditRemarksJSON [{at, by, remark}].
     // MessengerJSON (รายการพัสดุ) lines now name a ยา (itemId) and take it out
     // of Stock.
-    Records: ['RID', 'Date', 'PatientID', 'PatientName', 'Phone', 'ServiceCategory', 'Detail', 'DoctorID', 'DoctorName', 'SalesID', 'SalesName', 'PaymentMethod', 'SuppliesJSON', 'UseCanula', 'CanulaAmount', 'Amount', 'Status', 'ReceiptNo', 'Note', 'CreatedBy', 'CreatedAt', 'UpdatedAt', 'OtherAmount', 'SalesCommissionPct', 'SalesShare', 'DoctorCommissionPct', 'DoctorShareRaw', 'DoctorShare', 'DoctorShareNote', 'ClinicShare', 'VisitStatus', 'UsePromo', 'PromoJSON', 'PromoAmount', 'UseMedicine', 'MedicineJSON', 'MedicineAmount', 'UseOther', 'OtherItemsJSON', 'SupplierPayAmount', 'OpdImageFileId', 'UseSupplies', 'UseOwnMed', 'OwnMedJSON', 'UseDepositUse', 'DepositUseJSON', 'UseMessenger', 'MessengerJSON', 'StockApplied', 'UseProcedure', 'ProcedureJSON', 'DoctorSharesJSON', 'WithdrawJSON', 'QueueDate', 'QueueDoctor', 'QueuePay', 'VisitDoctorID', 'VisitDoctorName', 'CanulaNote', 'BeforePhotoIds', 'AfterPhotoIds', 'MedicineCost', 'OpdCreatedAt'],
+    Records: ['RID', 'Date', 'PatientID', 'PatientName', 'Phone', 'ServiceCategory', 'Detail', 'DoctorID', 'DoctorName', 'SalesID', 'SalesName', 'PaymentMethod', 'SuppliesJSON', 'UseCanula', 'CanulaAmount', 'Amount', 'Status', 'ReceiptNo', 'Note', 'CreatedBy', 'CreatedAt', 'UpdatedAt', 'OtherAmount', 'SalesCommissionPct', 'SalesShare', 'DoctorCommissionPct', 'DoctorShareRaw', 'DoctorShare', 'DoctorShareNote', 'ClinicShare', 'VisitStatus', 'UsePromo', 'PromoJSON', 'PromoAmount', 'UseMedicine', 'MedicineJSON', 'MedicineAmount', 'UseOther', 'OtherItemsJSON', 'SupplierPayAmount', 'OpdImageFileId', 'UseSupplies', 'UseOwnMed', 'OwnMedJSON', 'UseDepositUse', 'DepositUseJSON', 'UseMessenger', 'MessengerJSON', 'StockApplied', 'UseProcedure', 'ProcedureJSON', 'DoctorSharesJSON', 'WithdrawJSON', 'QueueDate', 'QueueDoctor', 'QueuePay', 'VisitDoctorID', 'VisitDoctorName', 'CanulaNote', 'BeforePhotoIds', 'AfterPhotoIds', 'MedicineCost', 'OpdCreatedAt', 'TreatedAt', 'EditRemarksJSON'],
     // MedDeposits — ยาฝาก, one row per lot: a record's medicine line that is
     // not all used creates a lot (RecordID = that record) with its own
     // ExpiryDate; รายการใช้ยาฝาก takes from the patient's lots, earliest
@@ -2572,6 +2573,7 @@ function mapRecordOut_(r) {
     totalCollected: collected,
     visitStatus: visitStatusOf_(r), // see visitStatusOf_: older ''/'scheduled' read as จัดยาแล้ว
     opdCreated: !!r.OpdCreatedAt, patientPending: !r.PatientID, // ใบ OPD saved at least once / the customer is still only a typed name (รออัพเดท)
+    treated: recordTreated_(r), editRemarks: parseLineItems_(r.EditRemarksJSON),
     queueDate: r.QueueDate ? dateStr_(r.QueueDate) : '', queueDoctor: Number(r.QueueDoctor) || null, queuePay: null,
     visitDoctorId: r.VisitDoctorID || '', visitDoctorName: r.VisitDoctorName || '',
     // Round 14 item 1.7 — OPD photo attachment (Drive fileId; fetch its
@@ -2646,6 +2648,12 @@ function visitStatusOf_(r) {
   if (v === 'pending' || v === 'waiting_doctor' || v === 'with_doctor' || v === 'waiting_payment') return v;
   if (v === 'completed') return r.Status === 'cancelled' ? 'completed' : 'waiting_payment';
   return 'dispensed';
+}
+
+/** The treatment record has been made (it reached รอชำระเงิน at least once) — later edits need a remark. */
+function recordTreated_(r) {
+  var st = visitStatusOf_(r);
+  return !!r.TreatedAt || st === 'waiting_payment' || st === 'completed';
 }
 
 /** The next queue number of `date` for kind 'D' (พบแพทย์) or 'P' (ชำระเงิน); starts at 1 each day. */
@@ -2882,7 +2890,7 @@ function computeDailySummaryDetail_(dateStr) {
     return dateStr_(r.Date) === dateStr && r.Status === 'paid';
   });
 
-  var totalCollected = 0, cashAmount = 0, transferAmount = 0, cardAmount = 0, otherAmountTotal = 0, canulaTotal = 0, clinicNet = 0;
+  var totalCollected = 0, cashAmount = 0, transferAmount = 0, cardAmount = 0, salesPayAmount = 0, otherPayAmount = 0, otherAmountTotal = 0, canulaTotal = 0, clinicNet = 0;
   // Round 13: promoAmountTotal/medicineAmountTotal/supplierPayTotal are new,
   // additive stats — promo money IS included in totalCollected (it's money
   // actually paid by the patient, see mapRecordOut_.totalCollected), while
@@ -2907,6 +2915,8 @@ function computeDailySummaryDetail_(dateStr) {
     if (r.PaymentMethod === 'เงินสด') cashAmount += collected;
     else if (r.PaymentMethod === 'โอนเงิน') transferAmount += collected;
     else if (r.PaymentMethod === 'บัตรเครดิต') cardAmount += collected;
+    else if (/^ชำระผ่านเซลล์/.test(String(r.PaymentMethod || ''))) salesPayAmount += collected; // "ชำระผ่านเซลล์ (ชื่อเซลล์)"
+    else if (r.PaymentMethod) otherPayAmount += collected; // "อื่นๆ (ระบุ)"
     recordDoctorShares_(r).forEach(function (d) {
       if (!doctorMap[d.doctorId]) doctorMap[d.doctorId] = { name: d.name, amount: 0, topped: false };
       doctorMap[d.doctorId].amount += Number(d.share) || 0;
@@ -2964,7 +2974,7 @@ function computeDailySummaryDetail_(dateStr) {
 
   return {
     date: dateStr, patientCount: records.length,
-    totalCollected: round2_(totalCollected), cashAmount: round2_(cashAmount), transferAmount: round2_(transferAmount), cardAmount: round2_(cardAmount),
+    totalCollected: round2_(totalCollected), cashAmount: round2_(cashAmount), transferAmount: round2_(transferAmount), cardAmount: round2_(cardAmount), salesPayAmount: round2_(salesPayAmount), otherPayAmount: round2_(otherPayAmount),
     canulaTotal: round2_(canulaTotal), otherAmountTotal: round2_(otherAmountTotal), clinicNet: round2_(clinicNet),
     doctorShares: doctorShares, doctorTotal: doctorTotal, hasToppedDoctor: doctorShares.some(function (d) { return d.topped; }),
     salesShares: salesShares, salesTotal: salesTotal, otherItems: otherItems,
@@ -3597,6 +3607,17 @@ function saveRecord(token, record) {
       // A ใบ OPD made by hand waits at รอดำเนินการ (visitFields above); the front moves it on to รอพบแพทย์ / พบแพทย์.
       if (record.complete && visitStatusOf_(obj) !== 'completed') applyVisitStatus_(obj, 'waiting_payment', todayStr_(), false);
       obj.VisitStatus = visitStatusOf_(obj);
+      // เสร็จสิ้น (paid) records are edited by an admin only; any edit of a record that already had its treatment
+      // saved (รอชำระเงิน once, even if sent back to พบแพทย์) keeps a remark of why.
+      if (!isNew && existing.Status === 'paid' && session.level !== 'admin') throw ValidationError_('รายการที่ชำระเงินแล้ว แก้ไขได้เฉพาะผู้ดูแลระบบ');
+      var editRemarks = isNew ? [] : parseLineItems_(existing.EditRemarksJSON);
+      if (!isNew && recordTreated_(existing)) {
+        var editRemark = String(record.editRemark || '').trim();
+        if (!editRemark) throw ValidationError_('กรุณาระบุหมายเหตุการแก้ไขบันทึกการรักษา');
+        editRemarks.push({ at: nowStr_(), by: session.name || session.username, remark: editRemark });
+      }
+      obj.EditRemarksJSON = JSON.stringify(editRemarks);
+      obj.TreatedAt = (!isNew && existing.TreatedAt) || (recordTreated_(obj) || (!isNew && recordTreated_(existing)) ? nowStr_() : '');
 
       // ยาฝาก + Stock before the record itself: both throw before writing
       // anything if a deposit lot would go negative / an item is missing.
@@ -3775,18 +3796,18 @@ function buildOpdSheetData_(rid) {
   getRows_(getSheet_(CONFIG.SHEETS.STOCK)).forEach(function (s) { stockById[s.ItemID] = s; });
   var stockNameOf = function (loc) { return loc === 'B' ? (receipt.clinic.stockNameB || 'Stock B') : (receipt.clinic.stockNameA || 'Stock A'); };
   var withLoc = function (l) { var loc = l.loc || (stockById[l.itemId] ? stockLocOf_(stockById[l.itemId]) : ''); return l.name + (loc ? ' [' + stockNameOf(loc) + ']' : ''); };
-  var medicines = [];
-  if (isTrue_(r.UseOwnMed)) parseLineItems_(r.OwnMedJSON).forEach(function (l) { medicines.push({ kind: 'ถือยาเข้า', name: l.name, qty: l.qty, amount: null }); });
-  if (isTrue_(r.UseDepositUse)) parseLineItems_(r.DepositUseJSON).forEach(function (l) { medicines.push({ kind: 'ยาฝาก', name: withLoc(l), qty: l.qty, amount: null }); });
-  parseLineItems_(r.WithdrawJSON).forEach(function (l) {
-    medicines.push({ kind: 'ยาเบิก', name: withLoc(l), qty: l.qtyDispensed, amount: null, note: 'ใช้ ' + (l.qtyUsed || 0) + (Number(l.qtyDeposit) > 0 ? ' · ฝาก ' + l.qtyDeposit + (l.expiry ? ' (หมดอายุ ' + l.expiry + ')' : '') : '') + (l.note ? ' · หมายเหตุ: ' + l.note : '') });
-  });
-  if (isTrue_(r.UseMedicine)) parseLineItems_(r.MedicineJSON).forEach(function (l) {
-    if (!('qtyDispensed' in l)) { medicines.push({ kind: 'ซื้อยาเพิ่ม', name: l.name || 'ยา', qty: '', amount: Number(l.amount) || 0 }); return; }
-    medicines.push({ kind: 'ซื้อยาเพิ่ม', name: withLoc(l), qty: l.qtyDispensed, amount: Number(l.amount) || 0,
-      note: (l.other ? 'ยาอื่นๆ · ' : '') + 'ใช้ ' + (l.qtyUsed || 0) + (Number(l.qtyDeposit) > 0 ? ' · ฝาก ' + l.qtyDeposit + (l.expiry ? ' (หมดอายุ ' + l.expiry + ')' : '') : '') + ' · ' + (Number(l.unitPrice) || 0) + ' บาท/หน่วย' });
-  });
-  if (isTrue_(r.UseMessenger)) parseLineItems_(r.MessengerJSON).forEach(function (l) { medicines.push({ kind: 'พัสดุ', name: withLoc(l), qty: l.qty, amount: null, note: l.note || '' }); });
+  // รายการยา by where it came from (ที่มายา), each under its own header; quantities only — no money on the ใบ OPD.
+  // ยาเบิก / ยาฝาก / ยาถือเข้า always show (blank lines to write in); ซื้อยาเพิ่ม / พัสดุ only when there are any.
+  var keepNote = function (l) { return 'ใช้ ' + (l.qtyUsed || 0) + (Number(l.qtyDeposit) > 0 ? ' · ฝาก ' + l.qtyDeposit + (l.expiry ? ' (หมดอายุ ' + l.expiry + ')' : '') : '') + (l.note ? ' · ' + l.note : ''); };
+  var medGroups = [
+    { title: 'ยาเบิก (จัดยา-เบิกยา)', always: true, rows: parseLineItems_(r.WithdrawJSON).map(function (l) { return { name: withLoc(l), qty: l.qtyDispensed, note: keepNote(l) }; }) },
+    { title: 'ยาฝาก (ใช้จาก stock ฝาก)', always: true, rows: !isTrue_(r.UseDepositUse) ? [] : parseLineItems_(r.DepositUseJSON).map(function (l) { return { name: withLoc(l), qty: l.qty, note: '' }; }) },
+    { title: 'ยาถือเข้า', always: true, rows: !isTrue_(r.UseOwnMed) ? [] : parseLineItems_(r.OwnMedJSON).map(function (l) { return { name: l.name, qty: l.qty, note: '' }; }) },
+    { title: 'ซื้อยาเพิ่ม', rows: !isTrue_(r.UseMedicine) ? [] : parseLineItems_(r.MedicineJSON).map(function (l) {
+      return 'qtyDispensed' in l ? { name: withLoc(l), qty: l.qtyDispensed, note: (l.other ? 'ยาอื่นๆ · ' : '') + keepNote(l) } : { name: l.name || 'ยา', qty: '', note: '' };
+    }) },
+    { title: 'พัสดุ (ส่ง Messenger)', rows: !isTrue_(r.UseMessenger) ? [] : parseLineItems_(r.MessengerJSON).map(function (l) { return { name: withLoc(l), qty: l.qty, note: l.note || '' }; }) }
+  ].filter(function (g) { return g.always || g.rows.length; });
   var procedures = parseLineItems_(r.ProcedureJSON).map(function (p) {
     return { name: p.name, detail: p.detail || '', doctor: doctorById[p.doctorId] || '', amount: Number(p.amount) || 0 };
   });
@@ -3807,7 +3828,7 @@ function buildOpdSheetData_(rid) {
     hn: patient.HN || '', patientName: r.PatientName, nickname: patient.Nickname || '', phone: r.Phone || '',
     gender: gender, dob: dob, age: age,
     salesName: r.SalesName || '', doctorName: r.VisitDoctorName || r.DoctorName || '',
-    medicines: medicines, procedures: procedures, others: others,
+    medGroups: medGroups, procedures: procedures, others: others,
     detail: r.Detail || '',
     clinic: receipt.clinic
   };
@@ -5741,6 +5762,8 @@ function buildPlainSummaryText_(s, clinicName) {
   lines.push('- เงินสด: ' + moneyFmt_(s.cashAmount) + ' บาท');
   lines.push('- เงินโอน: ' + moneyFmt_(s.transferAmount) + ' บาท');
   if (s.cardAmount) lines.push('- บัตรเครดิต: ' + moneyFmt_(s.cardAmount) + ' บาท');
+  if (s.salesPayAmount) lines.push('- ชำระผ่านเซลล์: ' + moneyFmt_(s.salesPayAmount) + ' บาท');
+  if (s.otherPayAmount) lines.push('- อื่นๆ: ' + moneyFmt_(s.otherPayAmount) + ' บาท');
   lines.push('');
   lines.push('จำนวนเคส: ' + s.patientCount + ' คน');
   lines.push('');
