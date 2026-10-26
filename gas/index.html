@@ -784,7 +784,10 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         '<main class="main">' +
           '<header class="header" style="display:flex;justify-content:space-between;align-items:center;padding:18px 26px;border-bottom:1px solid var(--border)">' +
             '<div><div class="page-title" style="font-size:18px;font-weight:700">' + esc(currentNav.label) + '</div><div class="page-sub" style="font-size:12.5px;color:var(--muted)">' + esc(currentNav.sub) + '</div></div>' +
-            '<div class="header-chip" style="font-size:12px;color:var(--muted)">' + esc(todayStr()) + '</div>' +
+            '<div style="display:flex;align-items:center;gap:8px">' +
+              '<button class="btn" data-action="refresh-screen" title="โหลดข้อมูลหน้านี้ใหม่" style="padding:7px 12px;font-size:12.5px"><span class="ms" style="font-size:17px">refresh</span> รีเฟรช</button>' +
+              '<div class="header-chip" style="font-size:12px;color:var(--muted)">' + esc(todayStr()) + '</div>' +
+            '</div>' +
           '</header>' +
           '<div class="content" style="padding:22px 26px 60px">' + screenBody() + '</div>' +
         '</main>' +
@@ -935,6 +938,27 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     render();
   }
 
+  /** รีเฟรช (page header): reloads what the current screen shows, plus the lists the pickers use. */
+  function refreshScreen() {
+    var s = state.screen;
+    refreshMaster(); refreshStockSuggestCache(); refreshPatientsSuggestCache();
+    if (s === 'dash') loadDash();
+    else if (s === 'patients') loadPatients();
+    else if (s === 'records') { loadRecords(); if (state.records.view === 'calendar') loadCalendar(); }
+    else if (s === 'stock') { if (state.stock.type === 'procedure') loadProcedures(); else loadStock(); }
+    else if (s === 'withdraw') loadWithdrawals();
+    else if (s === 'board') loadBoard();
+    else if (s === 'deposits') loadDeposits();
+    else if (s === 'reports') { if (state.report.data) runReport(); }
+    else if (s === 'expense') { if (state.expense.tab === 'expense') loadExpenses(); else loadOrders(); }
+    else if (s === 'promotions') loadPromotions();
+    else if (s === 'settings') {
+      var t = state.settings.tab; // loadSettingsTabData skips what is already loaded
+      if (t === 'doctors') loadDoctorsSales(); else if (t === 'categories') loadCategoriesTab(); else if (t === 'clinic') loadClinicInfo(); else if (t === 'staff' && isAdmin()) loadStaff();
+    }
+    pollQueueAlerts();
+    toast('success', 'รีเฟรชข้อมูลแล้ว');
+  }
   function goNav(screenId) {
     // Round 18 item 2: defensive guard — the sidebar never renders a button
     // for an adminOnly screen to a staff session (see allowedNav()), so this
@@ -5891,6 +5915,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
 
     switch (action) {
       case 'nav': goNav(arg); break;
+      case 'refresh-screen': refreshScreen(); break;
       case 'toggle-login-password': {
         var pwInput = document.getElementById('loginPassword');
         if (pwInput) {
