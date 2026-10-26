@@ -6,7 +6,7 @@
 <title>ARICH CLINIC · ระบบบริหารคลินิก</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=IBM+Plex+Sans+Thai+Looped:wght@300;400;500;600;700&family=Trirong:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@300;400;500;600;700&family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0&display=swap" rel="stylesheet">
 <style>
 /* ===================== Design tokens ===================== */
@@ -353,107 +353,101 @@ button,input,textarea,select{font-family:inherit}
 .stock-table th,.stock-table td{white-space:nowrap;padding-left:12px;padding-right:12px}
 .vmid th,.vmid td{vertical-align:middle}
 
-/* ===================== Premium theme =====================
-   Porcelain room, plum ink, rose-gold foil. One signature — the foil hairline (page header, active menu,
-   the logo ring, the money totals); everything else stays quiet: hairlines instead of shadows, no filled
-   icon tiles, radius by hierarchy (page blocks 16 · controls 10 · chips round). Trirong (Thai serif) sets
-   page titles and money; IBM Plex Sans Thai Looped carries the UI — looped Thai reads formal to Thai staff. */
+/* ===================== Glass theme =====================
+   Modern / minimal / glassmorphism on the ARICH rose palette: a soft blush–rose–lilac light field behind
+   everything, and the app's panels as frosted glass over it (translucent white, blur, a bright 1px edge).
+   One typeface (Anuphan), generous whitespace, no heavy borders; colour is kept for actions and status. */
 :root{
-  --bg:#F5F1F1; --surface:#FFFFFF;
-  --border:#E8DFE0; --border-soft:#EFE8E9; --border-lighter:#F3EEEE; --input-border:#E1D6D7;
-  --input-bg:#FFFFFF; --hover-bg:#F7F2F2; --hover-bg2:#EFE6E7;
-  --text:#2B1D22; --text-2:#56434A; --text-3:#3E2C32; --muted:#8C7A7F; --muted-2:#76646A; --muted-3:#B9AAAE; --muted-4:#D2C6C8; --icon-muted:#A8979B;
-  --accent:#7E3F4A; --accent-hover:#672F39; --accent-soft:#F4E9EA; --accent-soft2:#FAF4F4;
-  --gold:#C9977F; --gold-dark:#A8735E; --gold-soft:#F8EEE8;
-  --foil:linear-gradient(90deg,#B9826C 0%,#E9C3AE 34%,#F7E2D4 50%,#D7A58D 68%,#B9826C 100%);
-  --r:16px; --r-sm:10px; --r-lg:20px;
-  --sidebar-bg:#2E1C22; --sidebar-bg-2:#26171C; --sidebar-border:#3D2830; --sidebar-active-bg:rgba(233,195,174,.10);
-  --sidebar-text:#F6ECEA; --sidebar-text-muted:#BBA1A6; --sidebar-hover-bg:rgba(255,255,255,.045); --sidebar-border-soft:rgba(233,195,174,.18);
-  --chart-rev:#7E3F4A; --chart-exp:#D8BBAE; --chart-line:#B9826C;
-  --font-ui:'IBM Plex Sans Thai Looped','Noto Sans Thai',system-ui,sans-serif;
-  --font-display:'Trirong','Noto Sans Thai',serif;
+  --bg:#F6EFF1;
+  --surface:rgba(255,255,255,.62);
+  --glass:rgba(255,255,255,.55); --glass-strong:rgba(255,255,255,.82); --glass-edge:rgba(255,255,255,.75);
+  --glass-blur:blur(18px) saturate(160%);
+  --chart-rev:#C07C86; --chart-exp:#AE9BD0; --chart-line:#7C4A57;
+  --glass-shadow:0 8px 32px rgba(122,62,74,.08),0 1px 2px rgba(122,62,74,.05);
+  --border:rgba(156,88,98,.13); --border-soft:rgba(156,88,98,.09); --border-lighter:rgba(156,88,98,.07); --input-border:rgba(156,88,98,.18);
+  --input-bg:rgba(255,255,255,.7); --hover-bg:rgba(255,255,255,.45); --hover-bg2:rgba(255,255,255,.65);
+  --text:#33232A; --text-2:#5D4850; --muted:#9A858C;
+  --accent:#9C5862; --accent-hover:#84434D; --accent-soft:rgba(156,88,98,.10); --accent-soft2:rgba(156,88,98,.06);
+  --r:20px; --r-sm:12px; --r-lg:24px;
+  --sidebar-bg:rgba(255,255,255,.5); --sidebar-text:#33232A; --sidebar-text-muted:#7C666E;
+  --sidebar-active-bg:rgba(255,255,255,.9); --sidebar-hover-bg:rgba(255,255,255,.55); --sidebar-border-soft:rgba(156,88,98,.12);
 }
-body{font-family:var(--font-ui);line-height:1.55;font-variant-numeric:tabular-nums;background:var(--bg)}
-::selection{background:#F1DCD2}
-::-webkit-scrollbar-thumb{background:#DDCFD1;border:3px solid var(--bg)}
+html{background:#F6EFF1}
+body{font-family:'Anuphan','Noto Sans Thai',system-ui,sans-serif;letter-spacing:.005em;
+  background:
+    radial-gradient(48vw 48vw at 4% 2%,rgba(240,190,201,.65),transparent 62%),
+    radial-gradient(42vw 42vw at 96% 6%,rgba(222,178,166,.55),transparent 62%),
+    radial-gradient(52vw 52vw at 78% 96%,rgba(204,186,232,.50),transparent 62%),
+    radial-gradient(40vw 40vw at 14% 92%,rgba(246,214,222,.60),transparent 62%),
+    #F6EFF1;
+  background-attachment:fixed}
+.app-shell{background:transparent !important}
+::-webkit-scrollbar-thumb{background:rgba(156,88,98,.22);border:3px solid transparent;background-clip:padding-box}
 
-/* sidebar: velvet plum, the logo in a foil ring, a foil tick on the active menu */
-.sidebar{width:248px;background:linear-gradient(180deg,var(--sidebar-bg) 0%,var(--sidebar-bg-2) 100%);border-right:none;padding:24px 14px 16px;gap:20px}
-.sidebar .brand{padding:10px 8px 6px !important;gap:14px !important}
-.sidebar .brand img{width:92px !important;height:92px !important;border-radius:24px !important;
-  box-shadow:0 0 0 1px rgba(233,195,174,.6),0 0 0 6px var(--sidebar-bg),0 0 0 7px rgba(233,195,174,.22),0 20px 40px rgba(0,0,0,.35)}
-.brand-name{font-family:var(--font-display);font-size:16px;font-weight:500;letter-spacing:.2em;padding-left:.2em;
-  background:var(--foil);-webkit-background-clip:text;background-clip:text;color:transparent}
-.sidebar .brand-sub{color:var(--sidebar-text-muted) !important;letter-spacing:.04em}
-.nav-item{position:relative;padding:9px 12px 9px 16px;border-radius:10px;font-size:13.5px;font-weight:400;color:var(--sidebar-text-muted);transition:background .15s,color .15s}
-.nav-item .ms{font-size:19px;opacity:.8}
-.nav-item:hover{background:var(--sidebar-hover-bg);color:var(--sidebar-text)}
-.nav-item.active{background:var(--sidebar-active-bg);color:var(--sidebar-text);font-weight:500}
-.nav-item.active::before{content:'';position:absolute;left:0;top:8px;bottom:8px;width:2px;border-radius:2px;background:linear-gradient(180deg,#F7E2D4,#B9826C)}
-.nav-item.active .ms{color:#E9C3AE;opacity:1}
-.user-card{background:transparent !important;border:1px solid var(--sidebar-border-soft) !important;border-radius:12px}
-.user-card:hover{background:var(--sidebar-hover-bg) !important}
-.user-card .brand-mark{background:linear-gradient(135deg,#E9C3AE,#B9826C) !important;color:var(--sidebar-bg) !important}
+/* frosted glass */
+.card,.dash-card,.modal,.side-panel,.portal-dd,.user-menu,.swal2-popup{
+  background:var(--glass) !important;-webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);
+  border:1px solid var(--glass-edge) !important;box-shadow:var(--glass-shadow)}
+.modal,.side-panel,.portal-dd,.user-menu,.swal2-popup{background:var(--glass-strong) !important}
+.modal{border-radius:var(--r-lg) !important;box-shadow:0 24px 70px rgba(122,62,74,.18) !important}
+.modal-backdrop,.side-panel-backdrop{background:rgba(70,40,48,.18) !important;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.side-panel{border-radius:24px 0 0 24px;border-right:none !important}
 
-/* page header: Trirong title over the foil hairline */
-.header{position:sticky;top:0;z-index:6;padding:22px 32px 18px !important;border-bottom:none !important;background:rgba(245,241,241,.9) !important;-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
-.header::after{content:'';position:absolute;left:32px;right:32px;bottom:0;height:1px;background:var(--foil)}
-.page-title{font-family:var(--font-display);font-size:26px !important;font-weight:500 !important;letter-spacing:.005em;line-height:1.25;color:var(--text)}
-.page-sub{font-size:12.5px !important;color:var(--muted) !important;margin-top:3px}
-.header-chip{background:transparent;border:1px solid var(--border);color:var(--muted-2);cursor:default}
-.content{padding:26px 32px 64px !important}
+/* sidebar: a floating glass pane */
+.sidebar{background:var(--sidebar-bg);-webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);
+  border:1px solid var(--glass-edge);border-radius:26px;margin:12px 0 12px 12px;height:calc(100vh - 24px);top:12px;padding:20px 12px 14px;box-shadow:var(--glass-shadow)}
+.sidebar .brand img{width:104px !important;height:104px !important;border-radius:28px !important;box-shadow:0 10px 30px rgba(156,88,98,.22)}
+.brand-name{color:var(--accent);font-weight:600;letter-spacing:.08em}
+.nav-item{border-radius:14px;padding:10px 12px;color:var(--sidebar-text-muted);font-weight:500;transition:background .18s,color .18s,box-shadow .18s}
+.nav-item:hover{background:var(--sidebar-hover-bg);color:var(--text)}
+.nav-item.active{background:var(--sidebar-active-bg);color:var(--accent);box-shadow:0 4px 14px rgba(156,88,98,.12)}
+.user-card{background:rgba(255,255,255,.55) !important;border:1px solid var(--glass-edge) !important;border-radius:16px}
+.user-card:hover{background:rgba(255,255,255,.8) !important}
+.user-card .user-info div{color:var(--text) !important}
 
-/* surfaces */
-.card{border:1px solid var(--border);box-shadow:none}
-.modal{border-radius:var(--r-lg) !important;box-shadow:0 30px 80px rgba(46,28,34,.28),0 0 0 1px rgba(46,28,34,.04) !important}
-.modal-backdrop{background:rgba(46,28,34,.38) !important;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
-.mh-title{font-family:var(--font-display);font-size:21px !important;font-weight:500 !important;letter-spacing:.005em}
-.side-panel{box-shadow:-24px 0 60px rgba(46,28,34,.2)}
-.side-panel-backdrop{background:rgba(46,28,34,.32)}
-.day-summary-header{background:var(--sidebar-bg);position:relative}
-.day-summary-header::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;background:var(--foil)}
+/* header: transparent glass strip */
+.header{background:rgba(246,239,241,.45) !important;-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-bottom:1px solid rgba(255,255,255,.6) !important;padding:20px 30px !important}
+.page-title{font-size:22px !important;font-weight:600 !important;letter-spacing:-.005em}
+.page-sub{color:var(--muted) !important}
+.header-chip{background:rgba(255,255,255,.55);border:1px solid var(--glass-edge);color:var(--text-2)}
+.content{padding:24px 30px 60px !important}
 
 /* controls */
-.btn{background:var(--surface);border:1px solid var(--border);color:var(--text-2);border-radius:10px;font-weight:500;transition:background .15s,border-color .15s,color .15s}
-.btn:hover{border-color:var(--muted-4);color:var(--text);background:#FFFCFC}
-.btn-primary{background:var(--accent);border-color:var(--accent);color:#FFF7F4;box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 1px 2px rgba(46,28,34,.2)}
-.btn-primary:hover{background:var(--accent-hover);border-color:var(--accent-hover);color:#fff}
+.btn{background:rgba(255,255,255,.62);border:1px solid var(--glass-edge);color:var(--text-2);border-radius:12px;font-weight:500;
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);transition:background .15s,box-shadow .15s,color .15s}
+.btn:hover{background:rgba(255,255,255,.9);color:var(--text);box-shadow:0 4px 14px rgba(156,88,98,.10)}
+.btn-primary{background:linear-gradient(135deg,#B06A74,#9C5862);border-color:rgba(255,255,255,.35);color:#fff;box-shadow:0 6px 18px rgba(156,88,98,.28)}
+.btn-primary:hover{background:linear-gradient(135deg,#A45F69,#84434D);color:#fff;box-shadow:0 8px 22px rgba(156,88,98,.34)}
 .btn:disabled{opacity:.55;cursor:not-allowed}
-.btn:focus-visible,.nav-item:focus-visible,.tab-item:focus-visible{outline:2px solid #D7A58D;outline-offset:2px}
-input:focus,select:focus,textarea:focus{border-color:#C9977F !important;box-shadow:0 0 0 3px rgba(201,151,127,.18);outline:none}
+.btn:focus-visible,.nav-item:focus-visible,.tab-item:focus-visible{outline:2px solid rgba(156,88,98,.45);outline-offset:2px}
 input,select,textarea{color:var(--text)}
+input:focus,select:focus,textarea:focus{border-color:rgba(156,88,98,.5) !important;box-shadow:0 0 0 4px rgba(156,88,98,.12);background:rgba(255,255,255,.92) !important;outline:none}
 .tab-item.active{color:var(--accent);font-weight:600}
-.tab-item.active::after{background:var(--accent)}
+.pager button{background:rgba(255,255,255,.6);border-color:var(--glass-edge)}
 .pager button.active{background:var(--accent);border-color:var(--accent)}
+.tag-badge{-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
 
-/* tables: hairlines, quiet header */
+/* tables inside glass */
+.table thead tr,thead tr[style*="hover-bg"]{background:rgba(255,255,255,.35) !important}
 .table th{font-weight:500;color:var(--muted)}
-.table tbody tr:hover{background:#FBF8F8}
+.table tbody tr:hover{background:rgba(255,255,255,.55)}
 
-/* dashboard: the two totals are the room's centerpiece (plum, foil figures); the parts stay quiet */
-.dash-card{background:var(--surface);padding:16px 18px;gap:14px;align-items:flex-start}
-.dash-card .ic{width:34px;height:34px;border-radius:50%;background:transparent;color:var(--gold-dark);box-shadow:inset 0 0 0 1px #E6CDC1}
-.dash-card .ic .ms{font-size:18px !important}
-.dash-card .lb{font-size:12.5px;color:var(--muted)}
-.dash-card .vl{font-family:var(--font-display);font-size:23px;font-weight:500;letter-spacing:-.005em;line-height:1.3;margin-top:1px}
-.dash-cards .dash-card:nth-child(1),.dash-cards .dash-card:nth-child(6){background:linear-gradient(160deg,#3A242B 0%,var(--sidebar-bg) 70%);border-color:transparent}
-.dash-cards .dash-card:nth-child(1) .lb,.dash-cards .dash-card:nth-child(6) .lb{color:var(--sidebar-text-muted)}
-.dash-cards .dash-card:nth-child(1) .vl,.dash-cards .dash-card:nth-child(6) .vl{background:var(--foil);-webkit-background-clip:text;background-clip:text;color:transparent}
-.dash-cards .dash-card:nth-child(1) .ic,.dash-cards .dash-card:nth-child(6) .ic{color:#E9C3AE;box-shadow:inset 0 0 0 1px rgba(233,195,174,.45)}
+/* dashboard: soft icon chips instead of solid tiles */
+.dash-card{padding:16px 18px}
+.dash-card .ic{background:var(--accent-soft);color:var(--accent);border-radius:14px}
+.dash-card .vl{font-weight:600;letter-spacing:-.01em}
 
 /* dialogs */
-.swal2-popup{font-family:var(--font-ui) !important;border-radius:20px !important;color:var(--text) !important}
-.swal2-title{font-family:var(--font-display) !important;font-weight:500 !important;color:var(--text) !important}
-.swal2-styled.swal2-confirm{background-color:var(--accent);border-radius:10px}
-.swal2-styled.swal2-cancel{background-color:#fff;color:var(--text-2);border:1px solid var(--border);border-radius:10px}
-.swal2-styled:focus{box-shadow:0 0 0 3px rgba(201,151,127,.3) !important}
-.swal2-toast{border-radius:14px !important}
+.swal2-popup{font-family:'Anuphan','Noto Sans Thai',sans-serif !important;border-radius:24px !important}
+.swal2-styled.swal2-confirm{background-color:var(--accent);border-radius:12px}
+.swal2-styled.swal2-cancel{background-color:rgba(255,255,255,.8);color:var(--text-2);border:1px solid var(--border);border-radius:12px}
+.day-summary-header{background:linear-gradient(135deg,#B06A74,#9C5862)}
 
-/* login */
-.login-title{font-family:var(--font-display);font-size:30px !important;font-weight:500 !important;line-height:1.2}
+/* login: glass card over the same light field */
+.login-shell{background:transparent !important}
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms !important;transition-duration:.01ms !important}}
-@media (max-width:1000px){.sidebar{width:72px;padding:16px 8px}.sidebar .brand img{width:44px !important;height:44px !important;border-radius:12px !important}.nav-item{justify-content:center;padding:10px}.nav-item.active::before{top:10px;bottom:10px}}
-@media (max-width:720px){.header{padding:14px 14px 12px !important}.header::after{left:14px;right:14px}.page-title{font-size:21px !important}.content{padding:16px 14px 40px !important}}
+@media (max-width:1000px){.sidebar{width:72px;margin:8px 0 8px 8px;height:calc(100vh - 16px);top:8px;padding:14px 8px;border-radius:20px}.sidebar .brand img{width:44px !important;height:44px !important;border-radius:12px !important}}
+@media (max-width:720px){.header{padding:14px !important}.page-title{font-size:19px !important}.content{padding:16px 14px 40px !important}}
 </style>
 </head>
 <body>
@@ -519,7 +513,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   // 7 is the most steps that ramp clears every check with at once; a chart
   // with more series wraps back to the ramp's start, same as the old
   // PALETTE's per-slice cycling at 8.
-  var SEQ_BLUE_DARK = [110, 44, 56], SEQ_BLUE_LIGHT = [224, 188, 168]; // wine → rose gold
+  var SEQ_BLUE_DARK = [110, 44, 56], SEQ_BLUE_LIGHT = [218, 150, 158];
   var SEQ_BLUE_STEPS = 7;
   function seqBlueColor(i, n) {
     var steps = Math.min(Math.max(n, 1), SEQ_BLUE_STEPS);
@@ -926,21 +920,21 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   function loginTemplate() {
     var artStyle = LOGIN_IMAGE_URL
       ? 'background:#000 url(\'' + LOGIN_IMAGE_URL.replace(/'/g, '') + '\') center/cover no-repeat;display:flex;align-items:flex-end;justify-content:flex-start;padding:32px'
-      : 'background:radial-gradient(120% 90% at 30% 18%,#4B2E37 0%,#2E1C22 52%,#21141A 100%);display:flex;align-items:center;justify-content:center';
+      : 'background:transparent;display:flex;align-items:center;justify-content:center';
     var artBody = LOGIN_IMAGE_URL
       ? '<div style="background:linear-gradient(0deg,rgba(0,0,0,.55),rgba(0,0,0,0) 60%);position:absolute;inset:0"></div>' +
         '<div style="position:relative;color:#fff"><div style="font-size:22px;font-weight:700">ARICH CLINIC</div>' +
         '<div style="font-size:13px;opacity:.9;margin-top:4px">ระบบบริหารจัดการคลินิกเสริมความงาม</div></div>'
-      : '<div style="text-align:center"><img src="' + esc(DEFAULT_LOGO_URL) + '" alt="ARICH CLINIC" style="width:280px;max-width:62%;aspect-ratio:1;object-fit:cover;border-radius:56px;box-shadow:0 0 0 1px rgba(233,195,174,.6),0 0 0 12px #2E1C22,0 0 0 13px rgba(233,195,174,.25),0 40px 90px rgba(0,0,0,.45);display:block;margin:0 auto 34px">' +
-        '<div style="font-family:var(--font-display);font-size:19px;letter-spacing:.04em;color:#E9C3AE">ระบบบริหารจัดการคลินิกเสริมความงาม</div></div>';
+      : '<div style="text-align:center"><img src="' + esc(DEFAULT_LOGO_URL) + '" alt="ARICH CLINIC" style="width:300px;max-width:66%;aspect-ratio:1;object-fit:cover;border-radius:48px;box-shadow:0 30px 70px rgba(156,88,98,.25),0 0 0 10px rgba(255,255,255,.45);display:block;margin:0 auto 26px">' +
+        '<div style="font-size:14px;color:var(--text-2);letter-spacing:.3px">ระบบบริหารจัดการคลินิกเสริมความงาม</div></div>';
     return '' +
       '<div class="login-shell" style="min-height:100vh;display:grid;grid-template-columns:3fr 1fr">' +
         '<div class="login-art" style="' + artStyle + ';position:relative;overflow:hidden">' +
           artBody +
         '</div>' +
         '<div style="display:flex;align-items:center;justify-content:center;padding:24px">' +
-          '<form data-action-submit="login" style="width:100%;max-width:340px;display:flex;flex-direction:column;gap:14px">' +
-            '<div style="margin-bottom:6px"><div class="login-title" style="font-size:20px;font-weight:700">เข้าสู่ระบบ</div><div style="font-size:13px;color:var(--muted);margin-top:4px">กรอกชื่อผู้ใช้และรหัสผ่านของคุณ</div></div>' +
+          '<form class="card" data-action-submit="login" style="width:100%;max-width:360px;display:flex;flex-direction:column;gap:14px;padding:28px 26px;border-radius:24px">' +
+            '<div><div style="font-size:20px;font-weight:700">เข้าสู่ระบบ</div><div style="font-size:12.5px;color:var(--muted)">กรอกชื่อผู้ใช้และรหัสผ่านของคุณ</div></div>' +
             (state.loginError ? '<div style="background:var(--red-soft);color:var(--red-dark);font-size:12.5px;padding:9px 12px;border-radius:var(--r-sm)">' + esc(state.loginError) + '</div>' : '') +
             '<div><label style="font-size:12px;color:var(--text-2)">ชื่อผู้ใช้</label>' +
             '<div class="input-wrap" style="margin-top:4px"><span class="ms" style="font-size:18px;color:var(--muted)">person</span>' +
@@ -1123,7 +1117,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   }
   function modalHeader(title) {
     return '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">' +
-      '<div class="mh-title" style="font-size:16px;font-weight:700">' + esc(title) + '</div>' +
+      '<div style="font-size:16px;font-weight:700">' + esc(title) + '</div>' +
       '<button data-action="close-modal" style="border:none;background:none;cursor:pointer"><span class="ms">close</span></button></div>';
   }
   /** Shared underlined tab bar, e.g. the Expense page's ค่าใช้จ่าย/จัดซื้อ switch and Settings' sub-nav. */
@@ -3380,7 +3374,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     }).join('');
 
     var header = '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">' +
-        '<div><div class="mh-title" style="font-size:16px;font-weight:700">' + esc(d._toQueue ? 'สร้างใบ OPD' : d.id ? 'แก้ไขบันทึกการรักษา' : 'บันทึกการรักษาใหม่') + '</div>' +
+        '<div><div style="font-size:16px;font-weight:700">' + esc(d._toQueue ? 'สร้างใบ OPD' : d.id ? 'แก้ไขบันทึกการรักษา' : 'บันทึกการรักษาใหม่') + '</div>' +
         '<div style="font-size:12.5px;color:var(--text-2);margin-top:3px">เลขที่รายการรักษา <b>' + (d.id ? esc(d.id) : '<span style="color:var(--muted);font-weight:400">สร้างอัตโนมัติเมื่อบันทึก</span>') + '</b></div>' +
         '<div style="font-size:12px;color:var(--muted);margin-top:4px;display:flex;gap:6px;align-items:center">' + (d.status === 'cancelled' ? statusBadge(d.status) : '') + visitStatusBadge(d.visitStatus, d) + (d.receiptNo ? 'เลขที่ใบเสร็จ ' + esc(d.receiptNo) : 'ยังไม่ออกใบเสร็จ') + '</div></div>' +
         '<button data-action="close-modal" style="border:none;background:none;cursor:pointer"><span class="ms">close</span></button></div>' +
