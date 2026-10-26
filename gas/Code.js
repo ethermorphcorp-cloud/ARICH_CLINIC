@@ -4817,13 +4817,15 @@ function getDashboardData(token, opts) {
     var clinicRevenue = round2_(customerRevenue - medicinePurchased);
     var medRevenue = round2_(periodMedRows.reduce(function (s, o) { return s + o.clinicAmount; }, 0));
     var medCost = round2_(periodMedRows.reduce(function (s, o) { return s + o.costAmount; }, 0));
+    // ส่วนต่างคืนเซลล์ (ซื้อยาเพิ่ม charged above the เซลล์'s price) goes back to the เซลล์: an expense.
+    var salesRefund = round2_(periodMedRows.reduce(function (s, o) { return s + (o.refund || 0); }, 0));
     var totalRevenue = round2_(clinicRevenue + medRevenue);
     var expenseFromExpenses = periodExpenses.reduce(function (s, r) { return s + (Number(r.Amount) || 0); }, 0);
     var expenseFromOrders = periodOrders.reduce(function (s, r) { return s + (Number(r.TotalAmount) || 0); }, 0);
     var totalDoctorShare = periodRecords.reduce(function (s, r) { return s + (Number(r.DoctorShare) || 0); }, 0);
     var salesShareTotal = periodRecords.reduce(function (s, r) { return s + (Number(r.SalesShare) || 0); }, 0);
     var clinicExpense = round2_(expenseFromExpenses + expenseFromOrders);
-    var totalExpense = round2_(clinicExpense + medCost + totalDoctorShare + salesShareTotal);
+    var totalExpense = round2_(clinicExpense + medCost + totalDoctorShare + salesShareTotal + salesRefund);
     var profit = round2_(totalRevenue - totalExpense);
     var profitPct = totalRevenue > 0 ? (profit / totalRevenue) * 100 : 0;
 
@@ -4844,7 +4846,7 @@ function getDashboardData(token, opts) {
     paidRecords.forEach(function (r) { var m = monthKey_(dateStr_(r.Date)); if (monthlyRevenue[m] !== undefined) monthlyRevenue[m] += recordTotalCollected_(r) - (Number(r.MedicineAmount) || 0); });
     medRows.forEach(function (o) {
       var m = monthKey_(o.date);
-      if (monthlyRevenue[m] !== undefined) { monthlyRevenue[m] += o.clinicAmount; monthlyExpense[m] += o.costAmount; }
+      if (monthlyRevenue[m] !== undefined) { monthlyRevenue[m] += o.clinicAmount; monthlyExpense[m] += o.costAmount + (o.refund || 0); }
     });
     paidRecords.forEach(function (r) { var m = monthKey_(dateStr_(r.Date)); if (monthlyExpense[m] !== undefined) monthlyExpense[m] += (Number(r.DoctorShare) || 0) + (Number(r.SalesShare) || 0); });
     allExpenses.forEach(function (r) { var m = monthKey_(dateStr_(r.Date)); if (monthlyExpense[m] !== undefined) monthlyExpense[m] += Number(r.Amount) || 0; });
@@ -4888,6 +4890,7 @@ function getDashboardData(token, opts) {
     if (medCost > 0) byExpenseCat['ต้นทุนยา'] = (byExpenseCat['ต้นทุนยา'] || 0) + medCost;
     if (totalDoctorShare > 0) byExpenseCat['ส่วนแบ่งแพทย์'] = (byExpenseCat['ส่วนแบ่งแพทย์'] || 0) + totalDoctorShare;
     if (salesShareTotal > 0) byExpenseCat['ส่วนแบ่งเซลล์'] = (byExpenseCat['ส่วนแบ่งเซลล์'] || 0) + salesShareTotal;
+    if (salesRefund > 0) byExpenseCat['ส่วนต่างคืนเซลล์'] = (byExpenseCat['ส่วนต่างคืนเซลล์'] || 0) + salesRefund;
 
     // --- Revenue by promotion (Round 16 item 5) — each รายการโปร line's own
     // `amount`, summed by promotion name across the period's paid records.
@@ -4926,7 +4929,7 @@ function getDashboardData(token, opts) {
     periodMedRows.forEach(function (o) {
       var i = dayIdx[o.date];
       if (i === undefined) return;
-      medicineDaily[i].revenue += o.clinicAmount; medicineDaily[i].cost += o.costAmount; medicineDaily[i].profit += o.clinicAmount - o.costAmount;
+      medicineDaily[i].revenue += o.clinicAmount; medicineDaily[i].cost += o.costAmount + (o.refund || 0); medicineDaily[i].profit += o.clinicAmount - o.costAmount - (o.refund || 0);
     });
     clinicDaily.forEach(function (x) { x.revenue = round2_(x.revenue); x.expense = round2_(x.expense); x.profit = round2_(x.revenue - x.expense); });
     medicineDaily.forEach(function (x) { x.revenue = round2_(x.revenue); x.cost = round2_(x.cost); x.profit = round2_(x.profit); });
@@ -4943,7 +4946,7 @@ function getDashboardData(token, opts) {
         customerRevenue: round2_(customerRevenue), // what customers paid (incl. ซื้อยาเพิ่ม)
         doctorShare: round2_(totalDoctorShare), salesShare: round2_(salesShareTotal),  // expenses, with ค่าใช้จ่าย + จัดซื้อ
         clinicRevenue: clinicRevenue, medRevenue: medRevenue,                          // รายได้รวม = รายได้คลินิก + รายได้ยา
-        clinicExpense: clinicExpense, medCost: medCost                                 // ค่าใช้จ่ายรวม = คลินิก + ต้นทุนยา + ค่าคอมหมอ + ค่าคอมเซลล์
+        clinicExpense: clinicExpense, medCost: medCost, salesRefund: salesRefund                                 // ค่าใช้จ่ายรวม = คลินิก + ต้นทุนยา + ค่าคอมหมอ + ค่าคอมเซลล์
       },
       clinicDaily: clinicDaily,
       medicineDaily: medicineDaily,
