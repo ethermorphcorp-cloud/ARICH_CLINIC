@@ -545,7 +545,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     // `type` is the active tab: 'supply' (รายการเวชภัณฑ์) | 'medicine' (รายการยา) | 'procedure' (รายการหัตถการ).
     // `panel` is the open history side panel: {item, log} (log null while loading).
     // `procedures` is the รายการหัตถการ tab's full list (filtered/paged client-side).
-    stock: { type: 'supply', loc: 'A', priceGroup: '', priceSalesId: '', list: null, page: 1, q: '', category: '', searchSuggest: [], reloading: false, panel: null, procedures: null, procQ: '', procPage: 1 },
+    stock: { type: 'supply', loc: 'A', priceGroup: '', priceSalesId: '', list: null, page: 1, q: '', category: '', searchSuggest: [], reloading: false, panel: null, procedures: null, procQ: '', procPage: 1,
+      sum: { stock: '', category: '', q: '', from: '', to: '', mode: 'remaining', data: null, loading: false, page: 1 }, movePanel: null },
     deposits: { list: null, loc: 'A', q: '', filter: '', page: 1, panel: null },
     // Round 19 item 2: `reloading`/`orderReloading` drive a dim-in-place
     // transition on the table (instead of a hard content-swap with zero
@@ -716,6 +717,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     patientRecords: { holder: function () { return state.patients.panel; }, field: 'recPage', draw: function () { renderPatientPanel(); } },
     patientDeposits: { holder: function () { return state.patients.panel; }, field: 'depPage', draw: function () { renderPatientPanel(); } },
     stockLog: { holder: function () { return state.stock.panel; }, field: 'page', draw: function () { renderStockPanel(); } },
+    stockSum: { holder: function () { return state.stock.sum; }, field: 'page', draw: function () { render(); } },
     report: { holder: function () { return state.report; }, field: 'page', draw: function () { render(); } },
     deposits: { holder: function () { return state.deposits; }, field: 'page', draw: function () { render(); } },
     procedures: { holder: function () { return state.stock; }, field: 'procPage', draw: function () { render(); } },
@@ -945,7 +947,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     if (s === 'dash') loadDash();
     else if (s === 'patients') loadPatients();
     else if (s === 'records') { loadRecords(); if (state.records.view === 'calendar') loadCalendar(); }
-    else if (s === 'stock') { if (state.stock.type === 'procedure') loadProcedures(); else loadStock(); }
+    else if (s === 'stock') { if (state.stock.type === 'procedure') loadProcedures(); else if (state.stock.type === 'summary') loadStockSummary(); else loadStock(); }
     else if (s === 'withdraw') loadWithdrawals();
     else if (s === 'board') loadBoard();
     else if (s === 'deposits') loadDeposits();
@@ -976,7 +978,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     if (screenId === 'dash') loadDash();
     if (screenId === 'patients' && !state.patients.list) loadPatients();
     if (screenId === 'records') { loadRecords(); if (state.records.view === 'calendar') loadCalendar(); }
-    if (screenId === 'stock') { if (state.stock.type === 'procedure') { if (!state.stock.procedures) loadProcedures(); } else loadStock(); }
+    if (screenId === 'stock') { if (state.stock.type === 'procedure') { if (!state.stock.procedures) loadProcedures(); } else if (state.stock.type === 'summary') loadStockSummary(); else loadStock(); }
     if (screenId === 'withdraw') loadWithdrawals();
     if (screenId === 'board') { loadBoard(); clearQueueAlerts(); pollQueueAlerts(); }
     else pollQueueAlerts(); // look for newly รอชำระเงิน customers whenever the screen changes
@@ -3643,7 +3645,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   // จัดการสินค้า/บริการ tabs: เวชภัณฑ์, ยา of Stock A and of Stock B (each ยา row
   // belongs to one stock), plus รายการหัตถการ (not stock — see proceduresView).
   function productTabs() {
-    return [{ id: 'supply', label: 'รายการเวชภัณฑ์' }, { id: 'medicine:A', label: 'รายการยา ' + stockName('A') }, { id: 'medicine:B', label: 'รายการยา ' + stockName('B') }, { id: 'procedure', label: 'รายการหัตถการ' }];
+    return [{ id: 'supply', label: 'รายการเวชภัณฑ์' }, { id: 'medicine:A', label: 'รายการยา ' + stockName('A') }, { id: 'medicine:B', label: 'รายการยา ' + stockName('B') }, { id: 'procedure', label: 'รายการหัตถการ' }, { id: 'summary', label: 'สรุปรายการ stock' }];
   }
   var PRICE_SOURCE_LABELS = { standard: 'Standard', group: 'Sale group', agent: 'Sale Agent' };
   function stockTabId() { return state.stock.type === 'medicine' ? 'medicine:' + state.stock.loc : state.stock.type; }
@@ -3659,9 +3661,9 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     state.stock.type = type;
     if (type === 'medicine') state.stock.loc = parts[1] === 'B' ? 'B' : 'A';
     state.stock.list = null; state.stock.page = 1; state.stock.q = ''; state.stock.category = ''; state.stock.searchSuggest = [];
-    if (state.stock.panel) closeStockPanel();
+    if (state.stock.panel || state.stock.movePanel) closeStockPanel();
     render();
-    if (type === 'procedure') loadProcedures(); else loadStock();
+    if (type === 'procedure') loadProcedures(); else if (type === 'summary') loadStockSummary(); else loadStock();
   }
   function stockNumCell(v) { return v == null ? '<span style="color:var(--muted)">-</span>' : esc(Number(v).toLocaleString('en-US')); }
   function stockMoneyCell(v) { return v == null ? '<span style="color:var(--muted)">-</span>' : esc(money(v)); }
@@ -3675,6 +3677,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
    */
   function stockTemplate() {
     if (state.stock.type === 'procedure') return tabBar(productTabs(), 'procedure', 'stock-tab') + proceduresView();
+    if (state.stock.type === 'summary') return tabBar(productTabs(), 'summary', 'stock-tab') + stockSummaryView();
     var catOpts = [{ value: '', label: 'หมวดหมู่ทั้งหมด' }].concat((state.master.stockCategories || []).map(function (c) { return { value: c.name, label: c.name }; }));
     var L = state.stock.list;
     var type = state.stock.type, typeLabel = stockPageLabel();
@@ -3790,15 +3793,15 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
 
   /* ---- ประวัติการเคลื่อนไหว side panel (own root, see renderStockPanel) ---- */
   var stockPanelEl = document.getElementById('stockPanelRoot');
-  function renderStockPanel() { stockPanelEl.innerHTML = stockPanelTemplate(); }
+  function renderStockPanel() { stockPanelEl.innerHTML = state.stock.movePanel ? stockMovePanelTemplate() : stockPanelTemplate(); }
   function openStockPanel(id) {
     var item = stockItemById(id);
     if (!item) return;
-    state.stock.panel = { item: item, log: null };
+    state.stock.movePanel = null; state.stock.panel = { item: item, log: null };
     renderStockPanel();
     loadStockLog(id);
   }
-  function closeStockPanel() { state.stock.panel = null; renderStockPanel(); }
+  function closeStockPanel() { state.stock.panel = null; state.stock.movePanel = null; renderStockPanel(); }
   function loadStockLog(id) {
     call('getStockLog', session.token, id).then(function (res) {
       var p = state.stock.panel;
@@ -3855,6 +3858,142 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         '<button class="btn btn-primary" data-action="stock-adjust" data-arg="' + esc(it.id) + '"><span class="ms">tune</span> ปรับสต๊อก</button>' +
       '</div>';
     return sidePanelShell('close-stock-panel', body, 'side-panel-wide');
+  }
+
+  /* ---- สรุปรายการ stock: every item's คงเหลือ at the end of each day (or its net change that day) over up
+     to 30 days; Stock / หมวดหมู่ / ชื่อ filter the loaded rows, the dates reload them. A day with moves opens
+     them in the side panel (who, which customer, how many, the document). ---- */
+  var STOCK_SUM_MAX_DAYS = 30;
+  function addDaysStr(d, n) { var x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); }
+  function stockSumLabel(stock) { return stock === 'supply' ? 'เวชภัณฑ์' : stockName(stock); }
+  function loadStockSummary() {
+    var S = state.stock.sum;
+    if (!S.to) S.to = todayStr();
+    if (!S.from) S.from = addDaysStr(S.to, -6);
+    S.loading = true; render();
+    call('getStockSummary', session.token, { from: S.from, to: S.to }).then(function (res) {
+      S.data = res.data; S.loading = false; S.page = 1; render();
+    }, function () { S.loading = false; render(); });
+  }
+  /** A new date range: at most 30 days, start not after end. */
+  function onStockSumRange(field, value) {
+    var S = state.stock.sum, from = field === 'from' ? value : S.from, to = field === 'to' ? value : S.to;
+    if (!from || !to) return;
+    if (from > to) { toast('error', 'วันที่เริ่มต้นต้องไม่เกินวันที่สิ้นสุด'); render(); return; }
+    var span = Math.round((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 864e5) + 1;
+    if (span > STOCK_SUM_MAX_DAYS) { toast('error', 'เลือกช่วงวันที่ได้สูงสุด ' + STOCK_SUM_MAX_DAYS + ' วัน'); render(); return; }
+    S.from = from; S.to = to;
+    loadStockSummary();
+  }
+  var onStockSumSearch = debounce(function (q) { state.stock.sum.q = q; state.stock.sum.page = 1; render(); }, 150);
+  function stockSummaryRows() {
+    var S = state.stock.sum, q = String(S.q || '').trim().toLowerCase();
+    return ((S.data && S.data.items) || []).filter(function (it) {
+      return (!S.stock || it.stock === S.stock) && (!S.category || it.category === S.category) && (!q || String(it.name).toLowerCase().indexOf(q) > -1);
+    });
+  }
+  function stockSummaryView() {
+    var S = state.stock.sum, D = S.data, days = (D && D.days) || [];
+    var lbl = function (t) { return '<label style="font-size:11.5px;color:var(--muted);display:block;margin-bottom:4px">' + esc(t) + '</label>'; };
+    var sel = function (action, value, opts, w) {
+      return '<select data-action-change="' + action + '" style="' + inputStyle + ';width:' + w + '">' + opts.map(function (o) {
+        return '<option value="' + esc(o.value) + '"' + (o.value === value ? ' selected' : '') + '>' + esc(o.label) + '</option>';
+      }).join('') + '</select>';
+    };
+    var stockOpts = [{ value: '', label: 'ทุก stock' }, { value: 'supply', label: 'เวชภัณฑ์' }, { value: 'A', label: stockName('A') }, { value: 'B', label: stockName('B') }];
+    var catOpts = [{ value: '', label: 'หมวดหมู่ทั้งหมด' }].concat((state.master.stockCategories || []).map(function (c) { return { value: c.name, label: c.name }; }));
+    var modeBtn = function (id, text) {
+      var on = S.mode === id;
+      return '<button data-action="sum-mode" data-arg="' + id + '" style="border:none;padding:9px 14px;font:inherit;font-size:13px;cursor:pointer;' + (on ? 'background:var(--accent);color:#fff;font-weight:600' : 'background:var(--surface);color:var(--text-2)') + '">' + text + '</button>';
+    };
+    var filters = '<div class="card" style="border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;margin-bottom:14px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">' +
+      '<div>' + lbl('Stock') + sel('sum-stock', S.stock, stockOpts, '150px') + '</div>' +
+      '<div>' + lbl('หมวดหมู่') + sel('sum-cat', S.category, catOpts, '160px') + '</div>' +
+      '<div>' + lbl('ตั้งแต่วันที่') + '<input type="date" value="' + esc(S.from) + '" max="' + esc(S.to) + '" data-action-change="sum-from" style="' + inputStyle + ';width:160px"></div>' +
+      '<div>' + lbl('ถึงวันที่ (สูงสุด ' + STOCK_SUM_MAX_DAYS + ' วัน)') + '<input type="date" value="' + esc(S.to) + '" min="' + esc(S.from) + '" data-action-change="sum-to" style="' + inputStyle + ';width:160px"></div>' +
+      '<div style="flex:1;min-width:200px">' + lbl('ค้นหา') + searchInputHtml('stockSumSearch', S.q, 'ค้นหาชื่อรายการ', 'window.__arich.onStockSumSearch(this.value)', 'width:100%') + '</div>' +
+      '<div>' + lbl('แสดง') + '<div style="display:flex;border:1px solid var(--input-border);border-radius:9px;overflow:hidden">' + modeBtn('remaining', 'คงเหลือรายวัน') + modeBtn('change', 'รายการเปลี่ยนแปลง') + '</div></div>' +
+    '</div>';
+    if (!D) return filters + '<div class="card" style="border:1px solid var(--border);border-radius:var(--r)"><div class="empty-state" style="padding:40px"><span class="spin"></span> กำลังโหลด...</div></div>';
+    var rows = stockSummaryRows(), pg = localPage(rows, S.page), isChange = S.mode === 'change';
+    // first three columns stay put while the days scroll sideways; the header stays on top
+    var W = [100, 120, 230], L = [0, 100, 220];
+    var stick = function (k, head) { return 'position:sticky;left:' + L[k] + 'px;min-width:' + W[k] + 'px;max-width:' + W[k] + 'px;z-index:' + (head ? 4 : 1) + ';background:' + (head ? 'var(--hover-bg)' : 'var(--surface)') + ';' + (k === 2 ? 'box-shadow:inset -1px 0 0 var(--border);' : ''); };
+    var thTop = 'position:sticky;top:0;padding:9px 10px;white-space:nowrap;font-size:12px;color:var(--muted);text-align:left;';
+    var head = '<tr>' + ['Stock', 'หมวดหมู่', 'รายการสินค้า'].map(function (t, k) { return '<th style="' + thTop + stick(k, true) + '">' + t + '</th>'; }).join('') +
+      days.map(function (d) { return '<th style="' + thTop + 'z-index:2;background:var(--hover-bg);text-align:right;min-width:58px">' + esc(d.slice(8, 10) + '/' + d.slice(5, 7)) + '</th>'; }).join('') + '</tr>';
+    var cell = function (it, k) {
+      var day = days[k], moves = it.moves[k], click = moves ? ' data-action="sum-cell" data-arg="' + esc(it.id + '|' + day) + '" title="' + moves + ' รายการ · คลิกดูรายละเอียด"' : '';
+      var style = 'text-align:right;padding:8px 10px;white-space:nowrap;' + (moves ? 'cursor:pointer;' : '');
+      if (!isChange) {
+        var v = it.remaining[k], low = v < 0 || (it.minQty != null && v <= it.minQty);
+        return '<td' + click + ' style="' + style + (low ? 'color:var(--red-dark);font-weight:600;' : '') + (moves ? 'text-decoration:underline dotted;text-underline-offset:3px;' : '') + '">' + esc(Number(v).toLocaleString('en-US')) + '</td>';
+      }
+      var c = it.change[k];
+      var txt = c > 0 ? '+' + Number(c).toLocaleString('en-US') : c < 0 ? Number(c).toLocaleString('en-US') : (moves ? '±0' : '-');
+      var color = c > 0 ? 'var(--green-dark)' : c < 0 ? 'var(--red-dark)' : 'var(--muted)';
+      return '<td' + click + ' style="' + style + 'color:' + color + ';' + (c ? 'font-weight:600;' : '') + (moves ? 'text-decoration:underline dotted;text-underline-offset:3px;' : '') + '">' + txt + '</td>';
+    };
+    var body = !rows.length ? '<tr><td colspan="' + (3 + days.length) + '" class="empty-state">ไม่พบรายการ</td></tr>' :
+      pg.items.map(function (it) {
+        return '<tr style="border-top:1px solid var(--border-lighter,var(--border))">' +
+          '<td style="padding:8px 10px;' + stick(0) + '">' + esc(stockSumLabel(it.stock)) + '</td>' +
+          '<td style="padding:8px 10px;' + stick(1) + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(it.category || '-') + '</td>' +
+          '<td style="padding:8px 10px;' + stick(2) + '"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(it.name) + '">' + esc(it.name) + '</div>' +
+            (it.unit ? '<div style="font-size:11px;color:var(--muted)">' + esc(it.unit) + (it.minQty != null ? ' · ขั้นต่ำ ' + esc(it.minQty) : '') + '</div>' : '') + '</td>' +
+          days.map(function (d, k) { return cell(it, k); }).join('') + '</tr>';
+      }).join('');
+    return filters + listCardWrap('<div style="overflow:auto;max-height:calc(100vh - 260px)"><table class="table" style="border-collapse:collapse;font-size:13px;min-width:100%">' +
+        '<thead>' + head + '</thead><tbody>' + body + '</tbody></table></div>', S.loading) + localPagerHtml(pg, 'stockSum') +
+      '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">' + (isChange
+        ? 'ยอดเปลี่ยนแปลงสุทธิของวัน (+ เพิ่ม / − ลด) · ±0 = มีรายการแต่ยอดสุทธิไม่เปลี่ยน'
+        : 'ยอดคงเหลือ ณ สิ้นวัน · สีแดง = ต่ำกว่าหรือเท่ากับจำนวนขั้นต่ำ') + ' · ตัวเลขขีดเส้นใต้ = วันที่มีการเคลื่อนไหว คลิกเพื่อดูรายละเอียด</div>';
+  }
+  /** The moves of one item on one day, in the right-hand panel. */
+  function openStockMovePanel(arg) {
+    var parts = String(arg).split('|'), id = parts[0], day = parts[1];
+    var S = state.stock.sum, it = ((S.data && S.data.items) || []).filter(function (x) { return x.id === id; })[0];
+    if (!it) return;
+    var k = S.data.days.indexOf(day);
+    state.stock.panel = null;
+    state.stock.movePanel = { item: it, day: day, remaining: it.remaining[k], change: it.change[k], list: null };
+    renderStockPanel();
+    call('getStockMovements', session.token, id, day).then(function (res) {
+      var p = state.stock.movePanel;
+      if (!p || p.item.id !== id || p.day !== day) return;
+      p.list = res.data; renderStockPanel();
+    });
+  }
+  function stockMovePanelTemplate() {
+    var p = state.stock.movePanel, it = p.item;
+    var signed = function (v) { return (v > 0 ? '+' : '') + Number(v).toLocaleString('en-US'); };
+    var list = !p.list ? '<div class="empty-state" style="padding:40px 0"><span class="spin"></span> กำลังโหลด...</div>' :
+      (!p.list.length ? '<div class="empty-state" style="padding:40px 0">ไม่มีรายการเคลื่อนไหว</div>' :
+      p.list.map(function (m) {
+        var row = function (label, value) { return value ? '<div style="display:flex;gap:8px;font-size:12.5px;margin-top:3px"><span style="color:var(--muted);width:92px;flex:none">' + label + '</span><span style="min-width:0">' + value + '</span></div>' : ''; };
+        var ref = m.ref ? (/^R\d/.test(m.ref) ? '<a href="javascript:void(0)" data-action="view-record" data-arg="' + esc(m.ref) + '" style="color:var(--accent);text-decoration:none;font-weight:600">' + esc(m.ref) + '</a>' : '<b>' + esc(m.ref) + '</b>') : '';
+        return '<div style="border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 12px;margin-bottom:8px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">' +
+            '<div style="font-weight:700">' + esc(STOCK_LOG_KIND_LABELS[m.kind] || m.kind) + ' <span style="font-weight:400;color:var(--muted);font-size:12px">' + esc(m.time || '') + '</span></div>' +
+            '<div style="font-weight:700;font-size:15px;color:' + (m.change > 0 ? 'var(--green-dark)' : m.change < 0 ? 'var(--red-dark)' : 'var(--muted)') + '">' + esc(signed(m.change)) + (it.unit ? ' <span style="font-size:11.5px;font-weight:400">' + esc(it.unit) + '</span>' : '') + '</div>' +
+          '</div>' +
+          row('ผู้ทำรายการ', esc(m.createdByName || m.createdBy || '-')) +
+          row('คนไข้', m.patientName ? esc(m.patientName) : '') +
+          row('จำนวน', (m.qtyIn ? '<span style="color:var(--green-dark)">เพิ่ม ' + esc(m.qtyIn) + '</span>' : '') + (m.qtyIn && m.qtyOut ? ' · ' : '') + (m.qtyOut ? '<span style="color:var(--red-dark)">ใช้/ออก ' + esc(m.qtyOut) + '</span>' : '') + ' · คงเหลือ ' + esc(m.remaining)) +
+          row('เอกสารอ้างอิง', ref) +
+          row('หมายเหตุ', m.note ? '<span style="white-space:normal">' + esc(m.note) + '</span>' : '') +
+        '</div>';
+      }).join(''));
+    var body = '' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:18px 22px;border-bottom:1px solid var(--border);flex:none">' +
+        '<div><div style="font-size:16px;font-weight:700">' + esc(it.name) + '</div>' +
+        '<div style="font-size:12px;color:var(--muted);margin-top:2px">การเคลื่อนไหว · ' + esc(stockSumLabel(it.stock)) + (it.category ? ' · ' + esc(it.category) : '') + ' · ' + esc(p.day) + '</div>' +
+        '<div style="font-size:13px;margin-top:6px">เปลี่ยนแปลงสุทธิ <b style="color:' + (p.change > 0 ? 'var(--green-dark)' : p.change < 0 ? 'var(--red-dark)' : 'inherit') + '">' + esc(signed(p.change)) + '</b> · คงเหลือสิ้นวัน <b>' + esc(p.remaining) + ' ' + esc(it.unit || '') + '</b></div></div>' +
+        '<button data-action="close-stock-panel" style="border:none;background:none;cursor:pointer"><span class="ms">close</span></button>' +
+      '</div>' +
+      '<div style="flex:1;overflow:auto;padding:14px 18px">' + list + '</div>' +
+      '<div style="padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;flex:none"><button class="btn" data-action="close-stock-panel">ปิด</button></div>';
+    return sidePanelShell('close-stock-panel', body);
   }
 
   /* ---- รายการหัตถการ tab: the procedure price list the record modal's
@@ -6152,6 +6291,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       case 'delete-stock-log': deleteStockLogConfirm(arg); break;
       case 'exp-tab': expTab(arg); break;
       case 'stock-tab': stockTab(arg); break;
+      case 'sum-mode': state.stock.sum.mode = arg === 'change' ? 'change' : 'remaining'; render(); break;
+      case 'sum-cell': openStockMovePanel(arg); break;
       case 'new-withdraw': newWithdrawModal(); break;
       case 'wd-photo-add': pickWdPhoto(); break;
       case 'wd-photo-remove': removeWdPhoto(Number(arg)); break;
@@ -6228,6 +6369,10 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     var el = ev.target.closest('[data-action-change]');
     if (el && el.getAttribute('data-action-change') === 'dash-range') onDashRangeChange();
     if (el && el.getAttribute('data-action-change') === 'sales-group') changeSalesGroup(el.getAttribute('data-arg'), el.value);
+    if (el && el.getAttribute('data-action-change') === 'sum-stock') { state.stock.sum.stock = el.value; state.stock.sum.page = 1; render(); }
+    if (el && el.getAttribute('data-action-change') === 'sum-cat') { state.stock.sum.category = el.value; state.stock.sum.page = 1; render(); }
+    if (el && el.getAttribute('data-action-change') === 'sum-from') onStockSumRange('from', el.value);
+    if (el && el.getAttribute('data-action-change') === 'sum-to') onStockSumRange('to', el.value);
     if (el && el.getAttribute('data-action-change') === 'board-date') { state.board.date = el.value || todayStr(); state.board.data = null; render(); loadBoard(); }
   });
 
@@ -6490,7 +6635,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   window.__arich = {
     onListSearchInput: onListSearchInput,
     onPatientSuggestSearch: onPatientSuggestSearch, onPromotionSearch: onPromotionSearch, onWithdrawSearch: onWithdrawSearch,
-    onProcedureSearch: onProcedureSearch, onDepositSearch: onDepositSearch
+    onProcedureSearch: onProcedureSearch, onDepositSearch: onDepositSearch, onStockSumSearch: onStockSumSearch
   };
 
   /* ---------------------------------------------------------------- */

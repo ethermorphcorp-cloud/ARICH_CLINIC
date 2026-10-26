@@ -2420,6 +2420,106 @@ function getStockLog(token, itemId) {
   });
 }
 
+/* ---------------------------------------------------------------------
+   สรุปรายการ stock (จัดการสินค้า/บริการ): every stock item's คงเหลือ at the end of each day of a
+   range (at most 30 days) and its net change that day; one day's moves of an item for the side panel.
+   --------------------------------------------------------------------- */
+var STOCK_SUMMARY_MAX_DAYS = 30;
+
+/** The days from..to (yyyy-MM-dd), refused when the range is backwards or longer than STOCK_SUMMARY_MAX_DAYS. */
+function stockSummaryDays_(from, to) {
+  requireDateStr_(from, 'วันที่เริ่มต้น');
+  requireDateStr_(to, 'วันที่สิ้นสุด');
+  if (from > to) throw ValidationError_('วันที่เริ่มต้นต้องไม่เกินวันที่สิ้นสุด');
+  var days = [], d = new Date(from + 'T00:00:00Z'), end = new Date(to + 'T00:00:00Z');
+  while (d <= end) {
+    days.push(d.toISOString().slice(0, 10));
+    if (days.length > STOCK_SUMMARY_MAX_DAYS) throw ValidationError_('เลือกช่วงวันที่ได้สูงสุด ' + STOCK_SUMMARY_MAX_DAYS + ' วัน');
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return days;
+}
+
+/** StockLog rows by ItemID, each item's in date then CreatedAt order. */
+function stockLogsByItem_() {
+  var by = {};
+  getRows_(getSheet_(CONFIG.SHEETS.STOCK_LOG)).forEach(function (l) { (by[l.ItemID] = by[l.ItemID] || []).push(l); });
+  Object.keys(by).forEach(function (k) {
+    by[k].sort(function (a, b) { return dateStr_(a.Date).localeCompare(dateStr_(b.Date)) || String(a.CreatedAt).localeCompare(String(b.CreatedAt)); });
+  });
+  return by;
+}
+
+/**
+ * opts: {from, to}. One row per stock item (เวชภัณฑ์ and ยา, filtered on the client):
+ * {id, name, stock: 'supply'|'A'|'B', category, unit, minQty, remaining:[per day], change:[per day], moves:[per day]}.
+ * คงเหลือ of a day = the QtyRemaining of its last move on or before that day; change = that minus the day before.
+ */
+function getStockSummary(token, opts) {
+  return safeCall_(function () {
+    requireAuth_(token, 'staff');
+    opts = opts || {};
+    var days = stockSummaryDays_(opts.from, opts.to);
+    var logs = stockLogsByItem_();
+    var items = getRows_(getSheet_(CONFIG.SHEETS.STOCK)).map(function (s) {
+      var list = logs[s.ItemID] || [], k = 0, cur = 0;
+      while (k < list.length && dateStr_(list[k].Date) < days[0]) { cur = Number(list[k].QtyRemaining) || 0; k++; }
+      var remaining = [], change = [], moves = [];
+      days.forEach(function (day) {
+        var prev = cur, n = 0;
+        while (k < list.length && dateStr_(list[k].Date) === day) { cur = Number(list[k].QtyRemaining) || 0; k++; n++; }
+        remaining.push(round2_(cur)); change.push(round2_(cur - prev)); moves.push(n);
+      });
+      var med = stockTypeOf_(s) === 'medicine';
+      return {
+        id: s.ItemID, name: s.Name, stock: med ? stockLocOf_(s) : 'supply', category: s.Category || '', unit: s.Unit || '',
+        minQty: s.MinQty === '' || s.MinQty == null ? null : Number(s.MinQty),
+        remaining: remaining, change: change, moves: moves
+      };
+    });
+    items.sort(function (a, b) { return a.stock.localeCompare(b.stock) || String(a.category).localeCompare(String(b.category), 'th') || String(a.name).localeCompare(String(b.name), 'th'); });
+    return { ok: true, data: { days: days, items: items } };
+  });
+}
+
+/** Who / which customer / which document a StockLog note names (notes are written as "<what> <ref> · <name> · ..."). */
+function stockLogRefs_(l) {
+  var note = String(l.Note || '');
+  var ref = (note.match(/\b(R\d{4,}|PO\d{3,}|WD\d{3,}|WB\d{3,})\b/) || [])[1] || '';
+  var patient = '';
+  if (l.Kind === 'record' || l.Kind === 'withdraw') {
+    var parts = note.split(' · ');
+    if (parts.length > 1) patient = parts[1].trim();
+  }
+  return { ref: ref, patientName: patient };
+}
+
+/** itemId, date → that item's moves on that day, newest first: {time, kind, createdBy, createdByName, patientName, ref, qtyIn, qtyOut, change, remaining, note}. */
+function getStockMovements(token, itemId, date) {
+  return safeCall_(function () {
+    requireAuth_(token, 'staff');
+    requireDateStr_(date, 'วันที่');
+    var list = stockLogsByItem_()[itemId] || [];
+    var staffName = {};
+    getRows_(getSheet_(CONFIG.SHEETS.STAFF)).forEach(function (s) { staffName[s.Username] = s.Name; });
+    var prev = 0, out = [];
+    list.forEach(function (l) {
+      var rem = Number(l.QtyRemaining) || 0;
+      if (dateStr_(l.Date) === date) {
+        var refs = stockLogRefs_(l), m = mapStockLogOut_(l);
+        out.push({
+          id: l.LogID, time: isDate_(l.CreatedAt) ? Utilities.formatDate(l.CreatedAt, Session.getScriptTimeZone() || 'Asia/Bangkok', 'HH:mm') : String(l.CreatedAt || '').slice(11, 16), kind: m.kind,
+          createdBy: l.CreatedBy || '', createdByName: staffName[l.CreatedBy] || l.CreatedBy || '',
+          patientName: refs.patientName, ref: refs.ref,
+          qtyIn: m.qtyIn, qtyOut: m.qtyOut, change: round2_(rem - prev), remaining: rem, note: l.Note || ''
+        });
+      }
+      prev = rem;
+    });
+    return { ok: true, data: out.reverse() };
+  });
+}
+
 function mapStockLogOut_(l) {
   return {
     id: l.LogID, date: dateStr_(l.Date), itemId: l.ItemID, itemName: l.ItemName,
@@ -4236,13 +4336,13 @@ function saveMedWithdrawal(token, payload) {
           RecordID: '', PhotoFileIds: JSON.stringify(cleanPhotoIds_(payload.photoFileIds))
         };
       });
-      applyStockEffects_(session, {}, take, 'จัดยา-เบิกยา · ' + patientName + ' · ' + sales.Name, 'withdraw');
-      var sheet = getSheet_(CONFIG.SHEETS.MED_WITHDRAWALS);
-      var ids = nextSeqBlock_('WITHDRAW', rows.length, 5);
       var batchId = 'WB' + nextSeq_('WITHDRAW_BATCH', 5); // groups this save's lines
       // Every save also opens its บันทึกการรักษา (สถานะ จัดยาแล้ว), which the
       // lines belong to; staff add หัตถการ / รายการอื่นๆ there and finish it.
       var rid = 'R' + nextSeq_('RECORD', 6);
+      applyStockEffects_(session, {}, take, 'จัดยา-เบิกยา ' + rid + ' · ' + patientName + ' · ' + sales.Name, 'withdraw');
+      var sheet = getSheet_(CONFIG.SHEETS.MED_WITHDRAWALS);
+      var ids = nextSeqBlock_('WITHDRAW', rows.length, 5);
       rows.forEach(function (r, i) { r.WithdrawID = 'WD' + ids[i]; r.BatchID = batchId; r.RecordID = rid; appendRow_(sheet, CONFIG.HEADERS.MedWithdrawals, r); });
       var rec = {
         RID: rid, Date: payload.date, PatientID: patient.ID || '', PatientName: patientName, Phone: patient.Phone || '',
@@ -5456,7 +5556,7 @@ function seedDemoData(token) {
           Note: '', CreatedBy: actor, CreatedAt: nowStr_(), BatchID: batch,
           RecordID: rid
         });
-        move(date, m, 'withdraw', 0, q, 'จัดยา-เบิกยา · ' + patient.name + ' · ' + salesP.name);
+        move(date, m, 'withdraw', 0, q, 'จัดยา-เบิกยา ' + (rid || '') + ' · ' + patient.name + ' · ' + salesP.name);
         return wid;
       };
       perDay.forEach(function (count, k) {
