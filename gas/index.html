@@ -1002,7 +1002,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     return '' +
       '<div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(74,43,49,.32);display:flex;align-items:center;justify-content:center;z-index:2000;padding:20px" data-action="close-modal-bg">' +
         // The treatment-record form carries the wide ยา table, so it gets 1.5x the usual width.
-        '<div class="modal" style="background:var(--surface);border-radius:var(--r-lg);max-width:' + (state.modal.type === 'record' ? 960 : 640) + 'px;width:100%;max-height:88vh;overflow:auto;padding:24px">' +
+        '<div class="modal" style="background:var(--surface);border-radius:var(--r-lg);max-width:' + (state.modal.type === 'record' ? 960 : state.modal.type === 'order' ? 900 : 640) + 'px;width:100%;max-height:88vh;overflow:auto;padding:24px">' +
           body +
         '</div>' +
       '</div>';
@@ -5116,11 +5116,24 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       : '<span class="tag-badge" style="background:var(--border-soft);color:var(--text-2);white-space:nowrap">ซื้ออื่นๆ / เวชภัณฑ์</span>';
   }
   /** Stock items a PO line of this type can be: ยา for ซื้อยาจากเซลล์, everything else (เวชภัณฑ์...) for ซื้ออื่นๆ. */
-  function orderEligibleStock(type) {
-    return (state.suggestCache.stock || []).filter(function (x) { return type === 'sales' ? x.type === 'medicine' : x.type !== 'medicine'; });
+  /** Stock a PO line adds to: 'supply' (เวชภัณฑ์) or ยา 'A' / 'B'; ซื้อยาจากเซลล์ only has the ยา stocks. */
+  function orderStockOptions(type) {
+    var o = [{ value: 'A', label: stockName('A') }, { value: 'B', label: stockName('B') }];
+    return type === 'sales' ? o : [{ value: 'supply', label: 'เวชภัณฑ์' }].concat(o);
   }
-  function orderItemByText(type, text) {
-    var all = orderEligibleStock(type), t = String(text || '').trim();
+  function orderDefaultStock(type) { return type === 'sales' ? 'A' : 'supply'; }
+  /** The line's Stock from its linked item (an edited PO), else the PO type's default. */
+  function orderLineStock(type, l) {
+    var it = l.itemId ? (state.suggestCache.stock || []).filter(function (x) { return x.id === l.itemId; })[0] : null;
+    if (it) return it.type === 'medicine' ? (it.loc || 'A') : 'supply';
+    return orderDefaultStock(type);
+  }
+  function orderEligibleStock(type, stock) {
+    stock = stock || orderDefaultStock(type);
+    return stock === 'supply' ? stockItemsOfType('supply') : stockItemsOfType('medicine', stock);
+  }
+  function orderItemByText(type, text, stock) {
+    var all = orderEligibleStock(type, stock), t = String(text || '').trim();
     var hit = all.filter(function (x) { return (x.label || x.name) === t; })[0];
     if (hit) return hit;
     var named = all.filter(function (x) { return x.name === t; });
@@ -5129,7 +5142,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   /** After the PO type changed, re-links every line to a stock item of the new type (by its name) or unlinks it. */
   function relinkOrderLines(d) {
     (d.lines || []).forEach(function (l) {
-      var it = orderItemByText(d.type, l.itemName);
+      if (!orderStockOptions(d.type).some(function (o) { return o.value === l.stock; })) l.stock = orderDefaultStock(d.type);
+      var it = orderItemByText(d.type, l.itemName, l.stock);
       l.itemId = it ? it.id : '';
       if (it && it.category && (state.master.stockCategories || []).some(function (c) { return c.name === it.category; })) l.category = it.category;
     });
@@ -5219,9 +5233,13 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       '</div>';
     return sidePanelShell('close-order-panel', body, 'side-panel-wide');
   }
-  function newOrderModal() { openModal('order', { type: 'general', salesId: '', date: todayStr(), supplier: '', lines: [{ category: (state.master.stockCategories[0] || {}).name || '', itemName: '', qty: 1, unitPrice: 0 }] }); }
+  function newOrderModal() { openModal('order', { type: 'general', salesId: '', date: todayStr(), supplier: '', lines: [{ category: (state.master.stockCategories[0] || {}).name || '', stock: 'supply', itemName: '', qty: 1, unitPrice: 0 }] }); }
   function editOrderModal(id) {
-    call('getOrder', session.token, id).then(function (res) { openModal('order', res.data); });
+    call('getOrder', session.token, id).then(function (res) {
+      var d = res.data;
+      (d.lines || []).forEach(function (l) { l.stock = orderLineStock(d.type, l); });
+      openModal('order', d);
+    });
   }
   function deleteOrderConfirm(id) {
     Swal.fire({ icon: 'warning', title: 'ลบใบสั่งซื้อนี้?', showCancelButton: true, confirmButtonText: 'ลบ', cancelButtonText: 'ยกเลิก', confirmButtonColor: '#C08585' }).then(function (r) {
@@ -5233,7 +5251,11 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       });
     });
   }
-  function addOrderLine() { state.draft.lines.push({ category: (state.master.stockCategories[0] || {}).name || '', itemName: '', qty: 1, unitPrice: 0 }); render(); }
+  function addOrderLine() {
+    var last = state.draft.lines[state.draft.lines.length - 1];
+    state.draft.lines.push({ category: (state.master.stockCategories[0] || {}).name || '', stock: last ? last.stock : orderDefaultStock(state.draft.type), itemName: '', qty: 1, unitPrice: 0 });
+    render();
+  }
   function removeOrderLine(idx) { state.draft.lines.splice(idx, 1); render(); }
   function orderModalBody() {
     var d = state.draft;
@@ -5243,25 +5265,27 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     // stock item is linked to it (itemId, set in the input listener) and its
     // qty is added to that item's stock when the PO is saved.
     // Column widths shared by the header row and every line so the labels sit over their boxes.
-    var OQ_W = '64px', OP_W = '84px', OA_W = '96px', OX_W = '40px';
+    var OC_W = '130px', OS_W = '120px', OQ_W = '72px', OP_W = '96px', OA_W = '104px', OX_W = '40px';
     var colHead = function (t, w, align) { return '<div style="width:' + w + ';flex:none;text-align:' + (align || 'left') + '">' + t + '</div>'; };
     var lineHeader = '<div class="supply-row" style="margin-bottom:2px;font-size:11.5px;color:var(--muted)">' +
-      colHead('หมวดหมู่', '120px') + '<div class="g">ชื่อสินค้า</div>' + colHead('จำนวน', OQ_W) + colHead('ราคา/หน่วย', OP_W) + colHead('จำนวนเงิน', OA_W, 'right') + colHead('', OX_W) + '</div>';
+      colHead('หมวดหมู่', OC_W) + colHead('เพิ่มเข้า Stock', OS_W) + '<div class="g">ชื่อสินค้า</div>' + colHead('จำนวน', OQ_W) + colHead('ราคา/หน่วย', OP_W) + colHead('จำนวนเงิน', OA_W, 'right') + colHead('', OX_W) + '</div>';
     var lines = d.lines.map(function (l, i) {
       return '<div style="margin-bottom:8px">' +
         '<div class="supply-row" style="margin-bottom:2px">' +
-          '<div style="width:120px;flex:none">' + bindSelect('lines.' + i + '.category', catOpts) + '</div>' +
-          '<input type="text" list="dlOrderStock" autocomplete="off" placeholder="ชื่อสินค้า (เลือกจากสต๊อก)" value="' + esc(l.itemName) + '" data-bind="lines.' + i + '.itemName" style="' + inputStyle + '" class="g">' +
+          '<div style="width:' + OC_W + ';flex:none">' + bindSelect('lines.' + i + '.category', catOpts) + '</div>' +
+          '<div style="width:' + OS_W + ';flex:none">' + bindSelect('lines.' + i + '.stock', orderStockOptions(d.type)) + '</div>' +
+          '<input type="text" list="dlOrderStock' + i + '" autocomplete="off" placeholder="ชื่อสินค้า (เลือกจาก ' + esc(l.stock === 'supply' ? 'เวชภัณฑ์' : stockName(l.stock)) + ')" value="' + esc(l.itemName) + '" data-bind="lines.' + i + '.itemName" style="' + inputStyle + '" class="g">' +
           '<input type="number" min="0" value="' + esc(l.qty) + '" data-bind="lines.' + i + '.qty" style="' + inputStyle + ';width:' + OQ_W + ';flex:none" placeholder="จำนวน">' +
           '<input type="number" min="0" value="' + esc(l.unitPrice) + '" data-bind="lines.' + i + '.unitPrice" style="' + inputStyle + ';width:' + OP_W + ';flex:none" placeholder="ราคา/หน่วย">' +
           '<div id="orderLineAmt' + i + '" style="width:' + OA_W + ';flex:none;text-align:right;font-weight:600;font-size:13px">' + money(orderLineAmount(l)) + '</div>' +
           '<button class="btn" data-action="remove-order-line" data-arg="' + i + '" style="width:' + OX_W + ';flex:none"><span class="ms">close</span></button>' +
         '</div>' +
-        '<div id="orderLineCap' + i + '" style="font-size:11px;margin-left:128px">' + orderLineCaption(l) + '</div>' +
+        '<div id="orderLineCap' + i + '" style="font-size:11px;margin-left:calc(' + OC_W + ' + ' + OS_W + ' + 16px)">' + orderLineCaption(l) + '</div>' +
+        // suggestions: the items of this line's Stock, by plain name
+        '<datalist id="dlOrderStock' + i + '">' + orderEligibleStock(d.type, l.stock).map(function (s) {
+          return '<option value="' + esc(s.name) + '">' + esc((s.category || stockTypeLabel(s.type)) + (s.unit ? ' · ' + s.unit : '')) + '</option>';
+        }).join('') + '</datalist>' +
       '</div>';
-    }).join('');
-    var stockOpts = orderEligibleStock(d.type).map(function (s) {
-      return '<option value="' + esc(s.label || s.name) + '">' + esc(stockTypeLabel(s.type) + (s.category ? ' · ' + s.category : '')) + '</option>';
     }).join('');
     var isSales = d.type === 'sales';
     var salesOpts = [{ value: '', label: '— เลือกเซลล์ —' }].concat((state.master.sales || []).map(function (x) { return { value: x.id, label: x.name }; }));
@@ -5270,7 +5294,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">' + field('วันที่', bindInput('date', 'date')) +
         (isSales ? field('ชื่อเซลล์', bindSelect('salesId', salesOpts)) : field('ผู้จำหน่าย', bindInput('supplier'))) + '</div>' +
       '<div style="margin-bottom:6px"><label style="font-size:12px;color:var(--text-2)">รายการสินค้า</label></div>' +
-      lineHeader + lines + '<datalist id="dlOrderStock">' + stockOpts + '</datalist>' +
+      lineHeader + lines +
       '<button class="btn" data-action="add-order-line" style="margin-bottom:12px"><span class="ms">add</span> เพิ่มรายการ</button>' +
       (d.id && !d.stockApplied ? '<div style="font-size:11.5px;color:var(--amber-dark);margin-bottom:8px">ใบสั่งซื้อนี้สร้างก่อนระบบเชื่อมสต๊อก — การแก้ไขจะไม่เปลี่ยนจำนวนสต๊อก</div>' : '') +
       '<div id="orderTotal" style="text-align:right;font-weight:700;margin-bottom:10px">รวมทั้งสิ้น ' + money(total) + '</div>' + saveBtn();
@@ -5280,9 +5304,9 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   /** Under each PO line: which stock item it will add to, or that it isn't linked to stock. */
   function orderLineCaption(l) {
     var s = l.itemId ? (state.suggestCache.stock || []).filter(function (x) { return x.id === l.itemId; })[0] : null;
-    if (s) return '<span style="color:var(--green-dark)"><span class="ms" style="font-size:13px;vertical-align:middle">add_circle</span> เพิ่มเข้าสต๊อก' + esc(stockTypeLabel(s.type)) + (s.unit ? ' (' + esc(s.unit) + ')' : '') + '</span>';
+    if (s) return '<span style="color:var(--green-dark)"><span class="ms" style="font-size:13px;vertical-align:middle">add_circle</span> เพิ่มเข้า ' + esc(s.type === 'medicine' ? stockName(s.loc || 'A') : 'สต๊อกเวชภัณฑ์') + (s.unit ? ' (' + esc(s.unit) + ')' : '') + '</span>';
     if (String(l.itemName || '').trim() && state.draft && state.draft.type === 'sales') return '<span style="color:var(--red-dark)">ซื้อยาจากเซลล์ต้องเลือกยาจากสต๊อกยา</span>';
-    return String(l.itemName || '').trim() ? '<span style="color:var(--muted)">ไม่อยู่ในสต๊อก — ไม่เพิ่มจำนวนสต๊อก</span>' : '';
+    return String(l.itemName || '').trim() ? '<span style="color:var(--muted)">ไม่พบใน ' + esc(l.stock === 'supply' ? 'สต๊อกเวชภัณฑ์' : stockName(l.stock || 'A')) + ' — ไม่เพิ่มจำนวนสต๊อก</span>' : '';
   }
   function saveOrderModal() {
     if (!state.draft.lines.length) { toast('error', 'กรุณาเพิ่มรายการสินค้าอย่างน้อย 1 รายการ'); return; }
@@ -6252,10 +6276,11 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     }
     // PO type changed: lines are re-linked to stock items of the new type, and the form redraws (เซลล์ vs ผู้จำหน่าย).
     if (state.modal && state.modal.type === 'order' && bindPath === 'type') { relinkOrderLines(state.draft); render(); return; }
+    if (state.modal && state.modal.type === 'order' && /^lines\.\d+\.stock$/.test(bindPath)) { relinkOrderLines(state.draft); render(); return; }
     var orderPick = state.modal && state.modal.type === 'order' && bindPath.match(/^lines\.(\d+)\.itemName$/);
     if (orderPick) {
       var oLine = state.draft.lines[Number(orderPick[1])];
-      var oItem = orderItemByText(state.draft.type, val);
+      var oItem = orderItemByText(state.draft.type, val, oLine.stock);
       oLine.itemId = oItem ? oItem.id : '';
       if (oItem && oItem.category && (state.master.stockCategories || []).some(function (c) { return c.name === oItem.category; })) {
         oLine.category = oItem.category;

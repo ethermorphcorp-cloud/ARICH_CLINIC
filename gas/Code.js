@@ -4665,6 +4665,16 @@ function saveOrder(token, order) {
       requireNumber_(l.qty, 'จำนวน (บรรทัดที่ ' + (i + 1) + ')', { min: 0.0001 });
       requireNumber_(l.unitPrice, 'ราคาต่อหน่วย (บรรทัดที่ ' + (i + 1) + ')', { min: 0 });
     });
+    // Stock of each line: 'supply' (เวชภัณฑ์) or 'A' / 'B' (ยา) — the item it adds to must be in that stock.
+    var stockRowsById = {};
+    getRows_(getSheet_(CONFIG.SHEETS.STOCK)).forEach(function (s) { stockRowsById[s.ItemID] = s; });
+    lines.forEach(function (l, i) {
+      var st = stockRowsById[l.itemId];
+      if (!l.stock || !st) return;
+      var ok = l.stock === 'supply' ? stockTypeOf_(st) !== 'medicine' : stockTypeOf_(st) === 'medicine' && stockLocOf_(st) === l.stock;
+      if (!ok) throw ValidationError_('สินค้า "' + l.itemName + '" ไม่อยู่ใน stock ที่เลือก (บรรทัดที่ ' + (i + 1) + ')');
+      if (type === 'sales' && l.stock === 'supply') throw ValidationError_('ใบสั่งซื้อยาจากเซลล์ต้องเลือก Stock ยา (บรรทัดที่ ' + (i + 1) + ')');
+    });
     var totalAmount = lines.reduce(function (sum, l) { return sum + Number(l.qty) * Number(l.unitPrice); }, 0);
 
     var lock = LockService.getScriptLock();
