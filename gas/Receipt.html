@@ -663,11 +663,12 @@ if (valid) {
         }).from(el).save().then(done, done);
       };
       if (window.html2pdf) { run(); return; }
-      var s = document.createElement('script');
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
-      s.onload = run;
-      s.onerror = function () { alert('โหลดตัวสร้าง PDF ไม่สำเร็จ — ใช้ปุ่มพิมพ์แล้วเลือก "บันทึกเป็น PDF" แทนได้'); };
-      document.head.appendChild(s);
+      // Not the html2pdf bundle: its html2canvas drops / misplaces Thai vowel and tone marks; html2canvas 1.4.1 + jsPDF first.
+      var libs = ['https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.min.js'];
+      var load = function (src) { return new Promise(function (ok, fail) { var s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = fail; document.head.appendChild(s); }); };
+      Promise.all([load(libs[0]), load(libs[1])]).then(function () { return load(libs[2]); }).then(run, function () {
+        alert('โหลดตัวสร้าง PDF ไม่สำเร็จ — ใช้ปุ่มพิมพ์แล้วเลือก "บันทึกเป็น PDF" แทนได้');
+      });
     }
     // A4 is wider than a phone / narrow pane: shrink the sheet to fit (screen only — never in print or the PDF capture).
     function fitReceipt() {
