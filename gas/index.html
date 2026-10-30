@@ -4905,6 +4905,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
      modeled directly on the Orders/OrderLines multi-line modal above
      (newOrderModal/addOrderLine/removeOrderLine/orderModalBody). ---- */
   function newStockUpdateModal() {
+    // จำนวนรับเข้า is not typed here any more — stock comes in through เช็ครายการจัดซื้อ; this only records the count.
     openModal('stockupdate', { date: todayStr(), note: '', items: [{ itemId: '', qtyIn: 0, qtyRemaining: 0 }] });
   }
   function addStockUpdateLine() { state.draft.items.push({ itemId: '', qtyIn: 0, qtyRemaining: 0 }); render(); }
@@ -4916,7 +4917,6 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     var lines = d.items.map(function (it, i) {
       return '<div class="supply-row">' +
         '<div style="flex:1">' + bindSelect('items.' + i + '.itemId', itemOpts) + '</div>' +
-        '<input type="number" min="0" value="' + esc(it.qtyIn) + '" data-bind="items.' + i + '.qtyIn" style="' + inputStyle + ';width:110px" placeholder="จำนวนรับเข้า">' +
         '<input type="number" min="0" value="' + esc(it.qtyRemaining) + '" data-bind="items.' + i + '.qtyRemaining" style="' + inputStyle + ';width:110px" placeholder="จำนวนคงเหลือ">' +
         '<button class="btn" data-action="remove-stock-update-line" data-arg="' + i + '"><span class="ms">close</span></button>' +
       '</div>';
@@ -4924,7 +4924,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     return modalHeader('อัพเดตสต๊อก' + typeLabel) +
       field('วันที่', bindInput('date', 'date')) +
       '<div style="margin-bottom:6px"><label style="font-size:12px;color:var(--text-2)">รายการ' + typeLabel + '</label></div>' +
-      '<div style="display:flex;gap:8px;font-size:11px;color:var(--muted);padding:0 0 4px"><span style="flex:1">' + typeLabel + '</span><span style="width:110px">จำนวนรับเข้า</span><span style="width:110px">' + (state.stock.type === 'medicine' ? 'จำนวนพร้อมใช้' : 'จำนวนคงเหลือ') + '</span><span style="width:38px"></span></div>' +
+      '<div style="display:flex;gap:8px;font-size:11px;color:var(--muted);padding:0 0 4px"><span style="flex:1">' + typeLabel + '</span><span style="width:110px">' + (state.stock.type === 'medicine' ? 'จำนวนพร้อมใช้' : 'จำนวนคงเหลือ') + '</span><span style="width:38px"></span></div>' +
       lines + '<button class="btn" data-action="add-stock-update-line" style="margin-bottom:12px"><span class="ms">add</span> เพิ่มรายการ</button>' +
       field('หมายเหตุ', bindTextarea('note', 2)) + saveBtn();
   }
