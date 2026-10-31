@@ -727,7 +727,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   var NO_DEDUPE = { login: 1, startResumableUpload: 1, uploadFileChunk: 1 };
   var WRITE_LABELS = { login: 'กำลังเข้าสู่ระบบ...', backupData: 'กำลังสำรองข้อมูล...', seedDemoData: 'กำลังสร้างข้อมูลตัวอย่าง...', importStockCsv: 'กำลังนำเข้าข้อมูล...',
     startResumableUpload: 'กำลังอัปโหลด...', uploadFileChunk: 'กำลังอัปโหลด...', setLogo: 'กำลังอัปโหลด...', setLoginImage: 'กำลังอัปโหลด...', setWithdrawalPhotos: 'กำลังอัปโหลด...',
-    sendLineDailySummary: 'กำลังส่ง LINE...', importPatientsCsv: 'กำลังประมวลผลไฟล์...', importRecordsCsv: 'กำลังประมวลผลไฟล์...', importWithdrawalsCsv: 'กำลังประมวลผลไฟล์...',
+    sendLineDailySummary: 'กำลังส่ง LINE...', checkLineSetup: 'กำลังตรวจสอบการตั้งค่า LINE...',importPatientsCsv: 'กำลังประมวลผลไฟล์...', importRecordsCsv: 'กำลังประมวลผลไฟล์...', importWithdrawalsCsv: 'กำลังประมวลผลไฟล์...',
     clearDemoData: 'กำลังลบข้อมูล...', receiveOrder: 'กำลังบันทึกการรับสินค้า...', getReceiptHtml: 'กำลังเตรียมใบเสร็จ...', logout: 'กำลังออกจากระบบ...' };
   function isWriteFn(fn) { return !/^(list|get|search)/.test(fn) || !!WRITE_GETS[fn]; }
   var busyKeys = {}, clickKey = null, armedKey = null, inflightWrites = {};
@@ -6667,6 +6667,14 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       (settingsData.logoUrl ? '<button class="btn" data-action="remove-logo" style="margin-top:8px"><span class="ms">delete</span> ลบโลโก้</button>' : '') +
     '</div>' : '') +
     (isAdmin() ? '<div class="card" style="border:1px solid var(--border);border-radius:var(--r);padding:18px;max-width:520px;margin-top:16px">' +
+      '<div style="font-weight:700;margin-bottom:4px">การเชื่อมต่อ LINE</div>' +
+      '<div style="font-size:12px;color:var(--muted-2);margin-bottom:12px;line-height:1.7">ตรวจ Script Properties (LINE_CHANNEL_ACCESS_TOKEN, APP_URL), Webhook ใน LINE, ผู้รับข้อความ และตัวตั้งเวลา · ข้อความทดสอบส่งถึงทุกคนที่ติ๊ก "รับข้อมูลผ่าน LINE" ในตั้งค่าพนักงาน</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+        '<button class="btn btn-primary" data-action="check-line-setup"><span class="ms">fact_check</span> ตรวจสอบการตั้งค่า LINE</button>' +
+        '<button class="btn" data-action="send-line-summary"><span class="ms">send</span> ส่งข้อความทดสอบ</button>' +
+        '<button class="btn" data-action="install-line-trigger"><span class="ms">schedule</span> ตั้งเวลาส่งอัตโนมัติ</button>' +
+      '</div></div>' : '') +
+    (isAdmin() ? '<div class="card" style="border:1px solid var(--border);border-radius:var(--r);padding:18px;max-width:520px;margin-top:16px">' +
       '<div style="font-weight:700;margin-bottom:4px">รูปภาพหน้าเข้าสู่ระบบ (Login)</div>' +
       '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">รูปภาพที่แสดงด้านซ้ายของหน้าล็อกอิน จัดเก็บใน Google Drive ของคลินิก</div>' +
       (settingsData.loginImageUrl ? '<img src="' + esc(settingsData.loginImageUrl) + '" style="width:100%;max-width:300px;height:140px;object-fit:cover;border-radius:10px;margin-bottom:10px;display:block">' : '') +
@@ -6703,6 +6711,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         '<td><div style="font-weight:700">' + esc(s.name) + (!s.active ? ' <span class="tag-badge" style="background:var(--red-soft);font-size:10px;vertical-align:middle">ระงับ</span>' : '') + '</div>' +
           (s.role ? '<div style="font-size:11.5px;color:var(--muted);margin-top:2px">' + esc(s.role) + '</div>' : '') + '</td>' +
         '<td style="color:var(--text-2)">' + esc(s.username) + '</td>' +
+        '<td style="color:var(--text-2);font-size:12px;word-break:break-all;max-width:190px">' + (s.lineId ? esc(s.lineId) : '<span style="color:var(--muted)">—</span>') + '</td>' +
+        '<td style="text-align:center"><input type="checkbox" data-action-change="staff-line-notify" data-arg="' + esc(s.row) + '" ' + (s.lineNotify ? 'checked' : '') + (s.lineId ? '' : ' disabled title="กรอก LINE ID ก่อน"') + ' aria-label="รับข้อมูลผ่าน LINE: ' + esc(s.name) + '" style="width:16px;height:16px;cursor:pointer"></td>' +
         '<td>' + (s.level === 'admin' ? '<span class="tag-badge" style="background:var(--accent-soft);color:var(--accent-hover)">ADMIN</span>' : '<span class="tag-badge" style="background:var(--hover-bg);color:var(--text-2)">STAFF</span>') + '</td>' +
         '<td style="text-align:right;white-space:nowrap">' +
           '<button class="btn" data-action="reset-password" data-arg="' + esc(s.row) + '" title="รีเซ็ตรหัสผ่าน"><span class="ms">lock_reset</span></button> ' +
@@ -6716,10 +6726,15 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       '</div>' +
       '<div class="card" style="border:1px solid var(--border);border-radius:var(--r);overflow:hidden">' +
         '<table class="table" style="width:100%;border-collapse:collapse">' +
-          '<thead><tr style="text-align:left;font-size:12px;color:var(--muted);background:var(--hover-bg)"><th style="padding:10px 12px">รหัส</th><th>ชื่อพนักงาน</th><th>Username</th><th>สิทธิ์</th><th style="text-align:right;padding-right:14px">จัดการ</th></tr></thead>' +
+          '<thead><tr style="text-align:left;font-size:12px;color:var(--muted);background:var(--hover-bg)"><th style="padding:10px 12px">รหัส</th><th>ชื่อพนักงาน</th><th>Username</th><th>LINE ID</th><th style="text-align:center">รับข้อมูลผ่าน LINE</th><th>สิทธิ์</th><th style="text-align:right;padding-right:14px">จัดการ</th></tr></thead>' +
           '<tbody>' + rows + '</tbody></table></div>' + localPagerHtml(staffPg, 'staff');
   }
-  function newStaffModal() { openModal('staff', { name: '', role: '', username: '', lineId: '', level: 'staff', active: true }); }
+  function toggleStaffLineNotify(row, on) {
+    var s = staffByRow(row);
+    if (!s) return;
+    call('saveStaff', session.token, Object.assign({}, s, { lineNotify: !!on })).then(function () { toast('success', on ? 'จะส่งข้อมูลผ่าน LINE ให้ ' + s.name : 'ไม่ส่งข้อมูลผ่าน LINE ให้ ' + s.name); loadStaff(); }, function () { loadStaff(); });
+  }
+  function newStaffModal() { openModal('staff', { name: '', role: '', username: '', lineId: '', lineNotify: false, level: 'staff', active: true }); }
   // Staff rows are addressed by sheet row (listStaff's `row`): StaffIDs can repeat in a hand-edited sheet.
   function staffByRow(row) { return (state.settings.staff || []).filter(function (x) { return String(x.row) === String(row); })[0]; }
   function editStaffModal(row) { var s = staffByRow(row); if (s) openModal('staff', Object.assign({}, s)); }
@@ -6744,6 +6759,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     return modalHeader(d.id ? 'แก้ไขผู้ใช้งาน' : 'เพิ่มผู้ใช้งาน') +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">' + field('ชื่อ', bindInput('name')) + field('ตำแหน่ง', bindInput('role')) + '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">' + field('ชื่อผู้ใช้ (Username)', bindInput('username')) + field('LINE ID', bindInput('lineId')) + '</div>' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">' + bindInput('lineNotify', 'checkbox') + '<label>รับข้อมูลผ่าน LINE <span style="color:var(--muted-2);font-size:11.5px">(LINE ส่งสรุป/แจ้งเตือนสต๊อกให้เฉพาะคนที่ติ๊ก — ต้องกรอก LINE ID)</span></label></div>' +
       field('สิทธิ์การเข้าถึง', bindSelect('level', [{ value: 'staff', label: 'พนักงาน' }, { value: 'admin', label: 'ผู้ดูแลระบบ' }])) +
       (d.id ? '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">' + bindInput('active', 'checkbox') + '<label>เปิดใช้งานบัญชีนี้</label></div>' : '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">รหัสผ่านเริ่มต้น: 12345</div>') +
       saveBtn();
@@ -6784,6 +6800,18 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         refreshMaster(); refreshPatientsSuggestCache(); refreshStockSuggestCache();
         if (state.settings.tab === 'clinic') loadClinicInfo();
       });
+    });
+  }
+  function checkLineSetupAction() {
+    call('checkLineSetup', session.token).then(function (res) {
+      var icon = { ok: ['check_circle', 'var(--green-dark)'], warn: ['error', 'var(--amber-dark)'], error: ['cancel', 'var(--red-dark)'] };
+      var rows = res.data.checks.map(function (c) {
+        var i = icon[c.status] || icon.warn;
+        return '<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--border-soft);text-align:left">' +
+          '<span class="ms" style="font-size:20px;color:' + i[1] + ';flex:none">' + i[0] + '</span>' +
+          '<div style="min-width:0"><div style="font-size:13px;font-weight:600">' + esc(c.label) + '</div><div style="font-size:12px;color:var(--muted-2);line-height:1.55;word-break:break-word">' + esc(c.detail) + '</div></div></div>';
+      }).join('');
+      Swal.fire({ icon: res.data.ok ? 'success' : 'warning', title: res.data.ok ? 'ตั้งค่า LINE พร้อมใช้งาน' : 'พบจุดที่ต้องแก้', html: '<div style="margin-top:6px">' + rows + '</div>', confirmButtonText: 'ปิด', width: 520 });
     });
   }
   function sendLineSummaryNow() {
@@ -7154,6 +7182,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       case 'reset-password': resetPasswordConfirm(arg); break;
       case 'open-change-password': openModal('change-password', { current: '', next: '', confirm: '' }); break;
       case 'seed-demo-data': seedDemoDataConfirm(); break;
+      case 'check-line-setup': checkLineSetupAction(); break;
       case 'send-line-summary': sendLineSummaryNow(); break;
       case 'install-line-trigger': installLineTriggerAction(); break;
     }
@@ -7169,6 +7198,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
 
   document.addEventListener('change', function (ev) {
     var el = ev.target.closest('[data-action-change]');
+    if (el && el.getAttribute('data-action-change') === 'staff-line-notify') { toggleStaffLineNotify(el.getAttribute('data-arg'), el.checked); return; }
     if (el && el.getAttribute('data-action-change') === 'dash-range') onDashRangeChange();
     if (el && el.getAttribute('data-action-change') === 'sales-group') changeSalesGroup(el.getAttribute('data-arg'), el.value);
     if (el && el.getAttribute('data-action-change') === 'm-board-status') { state.board.mStatus = el.value; render(); }
