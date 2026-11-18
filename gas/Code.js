@@ -378,7 +378,7 @@ var CONFIG = {
     // access token is still needed as a Script Property.
     LINE_CHANNEL_ACCESS_TOKEN: 'LINE_CHANNEL_ACCESS_TOKEN',
     // The stock page link (LINE buttons): its signing secret (made on first use), and optional base URLs —
-    // PUBLIC_URL (a wrapper page; 'off' to ignore), APP_URL (this web app's /exec), else ScriptApp's own URL.
+    // PUBLIC_URL (default: the GitHub Pages wrapper, STOCK_PAGE_BASE_URL_; 'off' = APP_URL / this deployment's /exec instead).
     STOCK_LINK_SECRET: 'STOCK_LINK_SECRET',
     PUBLIC_URL: 'PUBLIC_URL',
     APP_URL: 'APP_URL'
@@ -6330,12 +6330,14 @@ function isStockLinkTokenValid_(token) {
   if (!(expiry > Date.now())) return false;
   return stockLinkSig_(parts[0]) === parts[1];
 }
-/** What the stock-page links start with: PUBLIC_URL (e.g. a wrapper page), else APP_URL, else this deployment's /exec URL. */
+/** docs/index.html on GitHub Pages: opens this web app full-screen in an iframe (no Apps Script banner) and passes the ?query on. */
+var STOCK_PAGE_BASE_URL_ = 'https://ethermorphcorp-cloud.github.io/ARICH_CLINIC/';
+/** What the stock-page links start with: PUBLIC_URL, else the Pages wrapper; 'off' = the /exec URL (APP_URL, else this deployment's). */
 function stockBaseUrl_() {
   var props = PropertiesService.getScriptProperties();
   var pub = String(props.getProperty(CONFIG.PROPS.PUBLIC_URL) || '').trim();
-  if (pub && pub.toLowerCase() !== 'off') return pub;
-  return props.getProperty(CONFIG.PROPS.APP_URL) || ScriptApp.getService().getUrl();
+  if (pub.toLowerCase() === 'off') return props.getProperty(CONFIG.PROPS.APP_URL) || ScriptApp.getService().getUrl();
+  return pub || STOCK_PAGE_BASE_URL_;
 }
 /** The link to the stock page (fresh 24-hour token), optionally opened on a search. */
 function stockPageUrl_(q) {
