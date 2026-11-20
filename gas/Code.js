@@ -5705,7 +5705,8 @@ function removeLogo(token) {
    DEMO DATA — clearAllData() empties the business data; seedDemoData()
    clears and then fills every sheet with sample data in the current format
    (stock types/prices, StockLog history, treatment records with เบิกยา/ฝาก/
-   ใช้ยาฝาก lines, MedDeposits, เบิกยาคลีนิค, purchase orders linked to stock).
+   ใช้ยาฝาก / ถือยาเข้า / จัดยารอส่ง / messenger เข้าคลินิก / ยาทาน lines, MedDeposits, เบิกยาคลีนิค, purchase
+   orders linked to stock; ยาทาน stock items).
    Both are admin-only from the client, or run them from the Apps Script
    editor with no arguments. Never touched: the Staff sheet (login
    accounts), its STAFF counter, and ClinicSettings (company info + logo).
@@ -5881,7 +5882,7 @@ function seedDemoData(token) {
 
       // ---- Categories ----
       var catSheet = getSheet_(CONFIG.SHEETS.CATEGORIES);
-      var cats = { treatment: ['โบท็อกซ์', 'ฟิลเลอร์', 'เลเซอร์', 'ดูแลผิวหน้า', 'ร้อยไหม'], stock: ['ยาฉีด', 'ยาทา/ยากิน', 'อุปกรณ์ทางการแพทย์', 'วัสดุสิ้นเปลือง'], expense: ['ค่าเช่า', 'ค่าน้ำค่าไฟ', 'เงินเดือนพนักงาน', 'การตลาด', 'ค่าซ่อมบำรุง', 'อื่นๆ'] };
+      var cats = { treatment: ['โบท็อกซ์', 'ฟิลเลอร์', 'เลเซอร์', 'ดูแลผิวหน้า', 'ร้อยไหม'], stock: ['ยาฉีด', 'ยาทา', 'ยาทาน', 'อุปกรณ์ทางการแพทย์', 'วัสดุสิ้นเปลือง'], expense: ['ค่าเช่า', 'ค่าน้ำค่าไฟ', 'เงินเดือนพนักงาน', 'การตลาด', 'ค่าซ่อมบำรุง', 'อื่นๆ'] };
       Object.keys(cats).forEach(function (type) {
         cats[type].forEach(function (name, i) {
           appendRow_(catSheet, CONFIG.HEADERS.Categories, { CategoryID: 'C' + nextSeq_('CATEGORY', 3), Type: type, Name: name, SortOrder: i + 1 });
@@ -5936,8 +5937,12 @@ function seedDemoData(token) {
         { type: 'medicine', name: 'โบท็อกซ์ Dysport 500u', category: 'ยาฉีด', unit: 'ขวด', open: 30, min: 8, cost: 2500, prices: [4500, 4300, 4100, 3900, 3700, 3500] },
         { type: 'medicine', name: 'ฟิลเลอร์ Juvederm 1ml', category: 'ยาฉีด', unit: 'หลอด', open: 20, min: 5, cost: 5200, prices: [9000, 8700, 8400, 8100, '', ''] },
         { type: 'medicine', name: 'วิตามินซีฉีด 1000mg', category: 'ยาฉีด', unit: 'แอมป์', open: 60, min: 15, cost: 120, prices: [350, 330, 300, 280, 260, 240] },
-        { type: 'medicine', name: 'ครีมทาแผลหลังเลเซอร์', category: 'ยาทา/ยากิน', unit: 'หลอด', open: 25, min: 6, cost: 180, prices: [450, 420, 400, '', '', ''] },
-        { type: 'medicine', name: 'ยาแก้ปวด Paracetamol 500', category: 'ยาทา/ยากิน', unit: 'แผง', open: 12, min: 10, cost: 15, prices: [40, 35, 30, 28, 25, 20] },
+        { type: 'medicine', name: 'ครีมทาแผลหลังเลเซอร์', category: 'ยาทา', unit: 'หลอด', open: 25, min: 6, cost: 180, prices: [450, 420, 400, '', '', ''] },
+        // ยาทาน (StockType 'oral'): one ราคาขาย (Price1), charged on the bill, no เซลล์ price tables.
+        { type: 'oral', name: 'Paracetamol 500mg', category: 'ยาทาน', unit: 'แผง', open: 40, min: 10, cost: 15, prices: [40, '', '', '', '', ''] },
+        { type: 'oral', name: 'Amoxicillin 500mg', category: 'ยาทาน', unit: 'แผง', open: 30, min: 8, cost: 45, prices: [120, '', '', '', '', ''] },
+        { type: 'oral', name: 'Cetirizine 10mg', category: 'ยาทาน', unit: 'แผง', open: 25, min: 6, cost: 20, prices: [60, '', '', '', '', ''] },
+        { type: 'oral', name: 'Tranexamic acid 250mg', category: 'ยาทาน', unit: 'กล่อง', open: 8, min: 5, cost: 180, prices: [450, '', '', '', '', ''] },
         { type: 'supply', name: 'เข็ม Canula 25G', category: 'อุปกรณ์ทางการแพทย์', unit: 'ชิ้น', open: 150, min: 30 },
         { type: 'supply', name: 'ไหมร้อยหน้า PDO', category: 'อุปกรณ์ทางการแพทย์', unit: 'เส้น', open: 60, min: 20 },
         { type: 'supply', name: 'ถุงมือทางการแพทย์', category: 'วัสดุสิ้นเปลือง', unit: 'กล่อง', open: 40, min: 10 },
@@ -5953,6 +5958,7 @@ function seedDemoData(token) {
       });
       var meds = stock.filter(function (s) { return s.type === 'medicine'; });
       var supplies = stock.filter(function (s) { return s.type === 'supply'; });
+      var orals = stock.filter(function (s) { return s.type === 'oral'; });
       // PriceOverrides: Sale group / Sale agent price tables (the เซลล์'s own table, else the group's, else Standard — used whole).
       var seedOvr = {};
       [
@@ -6010,7 +6016,7 @@ function seedDemoData(token) {
 
       // Even-numbered POs are ซื้อยาจากเซลล์ (ยา in stock, the เซลล์ named; not a clinic expense), odd ones ซื้ออื่นๆ / เวชภัณฑ์ทั่วไป.
       for (var o = 0; o < 5; o++) {
-        var isSalesPo = o % 2 === 0, poSales = isSalesPo ? sales[(o / 2) % sales.length] : null, pool = isSalesPo ? meds : [supplies[0], supplies[1]];
+        var isSalesPo = o % 2 === 0, poSales = isSalesPo ? sales[(o / 2) % sales.length] : null, pool = isSalesPo ? meds : (o === 1 ? [orals[0], orals[1], orals[2]] : [supplies[0], supplies[1]]); // PO 2 restocks ยาทาน (not Tranexamic, which stays ใกล้หมด)
         var poSupplier = isSalesPo ? poSales.name : suppliers[o % suppliers.length];
         var poDate = dayStr(75 - o * 15), poId = 'PO' + nextSeq_('ORDER', 5), total = 0, poLines = [];
         for (var l = 0; l < 2 + (o % 2); l++) {
@@ -6117,9 +6123,35 @@ function seedDemoData(token) {
               .sort(function (x, y) { return x.expiry.localeCompare(y.expiry); })[0];
             if (lot) { lot.qty = round2_(lot.qty - 1); depositUse.push({ name: lot.name, qty: 1, itemId: lot.itemId, lots: [{ depositId: lot.id, qty: 1 }] }); }
           }
-          var ownMed = i % 9 === 4 ? [{ name: 'ยาที่ลูกค้านำมาเอง', qty: 1 }] : [];
-          var msgItem = (wdItems.length && stock.filter(function (s) { return s.id === wdItems[0].itemId; })[0]) || meds[0];
-          var messenger = i % 10 === 6 ? [{ itemId: msgItem.id, name: msgItem.name, loc: msgItem.loc, qty: 1, note: 'Kerry TH' + (100000 + i) }] : [];
+          // ถือยาเข้า: a name from the list, or อื่นๆ typed by hand.
+          var ownMed = i % 18 === 4 ? [{ name: meds[1].name, qty: 1 }] : (i % 18 === 13 ? [{ name: 'ยาสมุนไพรที่ลูกค้านำมาเอง', qty: 1, other: true }] : []);
+          // จัดยารอส่ง: ยา packed for the เซลล์ to send on (out of stock, not charged); lines older than ~3 weeks are already billed.
+          var ship = [];
+          if (salesP && i % 5 === 2) {
+            var shm = meds[(i + 1) % meds.length], shq = 1 + (i % 2), shp = seedPrice(shm, salesP, shq), shAgo = (perDay.length - 1 - k) * 4, shBilled = shAgo >= 24;
+            ship.push({ lineId: rid + '-S1', itemId: shm.id, name: shm.name, loc: shm.loc, qty: shq, unitCost: shm.cost, salePrice: shp.price,
+              status: shBilled ? 'billed' : 'pending', billedAt: shBilled ? dayStr(shAgo - 3) + ' 15:00:00' : '', billedBy: shBilled ? 'Admin' : '' });
+          }
+          // พัสดุ/messenger เข้าคลินิก: รับเข้า / ใช้, the rest ฝาก (a ยาฝาก lot) or รับกลับ; no stock, not charged.
+          var msgIn = [];
+          if (i % 6 === 1) {
+            var mim = meds[i % meds.length], miKeep = i % 12 === 1 && status !== 'cancelled' ? 'deposit' : 'return', miExp = '';
+            if (miKeep === 'deposit') {
+              miExp = lotExpiry();
+              lots.push({ id: 'DP' + nextSeq_('DEPOSIT', 5), date: date, patient: patient, itemId: mim.id, name: mim.name, expiry: miExp, qtyDeposited: 2, qty: 2, recordId: rid });
+            }
+            msgIn.push({ other: false, itemId: mim.id, name: mim.name, loc: mim.loc, qtyIn: 3, qtyUsed: 1, keep: miKeep, qtyDeposit: miKeep === 'deposit' ? 2 : 0, expiry: miExp });
+          }
+          if (i % 12 === 7) msgIn.push({ other: true, itemId: '', name: 'ยาจากคลินิกเดิมของลูกค้า', loc: '', qtyIn: 2, qtyUsed: 1, keep: 'return', qtyDeposit: 0, expiry: '' });
+          // รายการยาทาน: from the ยาทาน list at its ราคาขาย (out of stock, charged, no commission), now and then an อื่นๆ line.
+          var oral = [];
+          if (i % 4 === 1) {
+            var om = orals[Math.floor(i / 4) % orals.length], oq = 1 + (i % 2);
+            oral.push({ other: false, itemId: om.id, name: om.name, unitCost: om.cost, qty: oq, unitPrice: om.prices[0], amount: round2_(oq * om.prices[0]) });
+          }
+          if (i % 13 === 6) oral.push({ other: true, itemId: '', name: 'วิตามินรวม (นอกรายการ)', unitCost: 0, qty: 1, unitPrice: 250, amount: 250 });
+          var oralAmount = round2_(oral.reduce(function (sum, x) { return sum + x.amount; }, 0));
+          var oralCost = round2_(oral.reduce(function (sum, x) { return sum + x.qty * x.unitCost; }, 0));
           // 4 รายการอื่นๆ: promo (its doctor is the next one, so those visits pay two doctors) / canula / other.
           var promo = activePromos.length && i % 5 === 0 ? activePromos[i % activePromos.length] : null;
           var promoDoctor = doctors[(i + 1) % doctors.length];
@@ -6146,10 +6178,13 @@ function seedDemoData(token) {
             UseSupplies: supplyLines.length ? 'TRUE' : 'FALSE',
             UseOwnMed: ownMed.length ? 'TRUE' : 'FALSE', OwnMedJSON: JSON.stringify(ownMed),
             UseDepositUse: depositUse.length ? 'TRUE' : 'FALSE', DepositUseJSON: JSON.stringify(depositUse),
-            UseMessenger: messenger.length ? 'TRUE' : 'FALSE', MessengerJSON: JSON.stringify(messenger),
+            UseMessenger: 'FALSE', MessengerJSON: '[]',
             StockApplied: 'TRUE', WithdrawJSON: JSON.stringify(wdItems),
             UseProcedure: 'TRUE',
-            ProcedureJSON: JSON.stringify(procLines.map(function (l) { return { procId: l.proc.id, name: l.proc.name, price: l.proc.price, amount: l.amount, doctorId: l.doctor.id }; }))
+            ProcedureJSON: JSON.stringify(procLines.map(function (l) { return { procId: l.proc.id, name: l.proc.name, price: l.proc.price, amount: l.amount, doctorId: l.doctor.id }; })),
+            UseShip: ship.length ? 'TRUE' : 'FALSE', ShipJSON: JSON.stringify(ship),
+            UseMsgIn: msgIn.length ? 'TRUE' : 'FALSE', MsgInJSON: JSON.stringify(msgIn),
+            UseOral: oral.length ? 'TRUE' : 'FALSE', OralJSON: JSON.stringify(oral), OralAmount: oralAmount, OralCost: oralCost
           };
           applyDoctorShares_(row, buildDoctorShares_(doctorEntries, seedDoctorById));
           appendRow_(recSheet, CONFIG.HEADERS.Records, row);
@@ -6187,7 +6222,7 @@ function seedDemoData(token) {
       });
 
       // ตัวอย่างครบวงจร: ลูกค้า 1 ราย 1 วัน (วันนี้) — ประวัติคนไข้ (HN) > จัดยา-เบิกยา (โบท็อกซ์ 3 ใช้ 1 ฝาก 2 + วิตามินซี 2)
-      // > บันทึกการรักษา (เวชภัณฑ์ · หัตถการ 2 รายการต่างแพทย์ · ยาจากใบเบิก + ยาเบิกเพิ่ม · โปร / Canula / อื่นๆ)
+      // > บันทึกการรักษา (เวชภัณฑ์ · หัตถการ 2 รายการต่างแพทย์ · ยาจากใบเบิก + ยาเบิกเพิ่ม + จัดยารอส่ง · โปร / Canula / ยาทาน / อื่นๆ)
       // > เสร็จสิ้น > ชำระเงินสด + ออกใบเสร็จ. Shows in every list, the day summary and both reports.
       (function () {
         var date = dayStr(0), salesP = sales[0], dA = doctors[0], dB = doctors[1];
@@ -6213,6 +6248,9 @@ function seedDemoData(token) {
         var csp = seedPrice(cream, salesP, 1);
         var extraLines = [{ itemId: cream.id, name: cream.name, loc: cream.loc, qtyDispensed: 1, qtyUsed: 1, qtyDeposit: 0, expiry: '', unitCost: cream.cost, unitPrice: csp.price, amount: csp.price, priceSource: csp.source, priceRefId: csp.refId, tier: csp.tier }];
         var supplyLines = [{ itemId: supplies[0].id, name: supplies[0].name, qty: 2, unit: supplies[0].unit }];
+        // + ยาทาน 2 แผง (charged) and วิตามินซี 2 จัดยารอส่ง for the เซลล์ (out of stock, รอคิดเงินเซลล์).
+        var amox = orals[1], oralLines = [{ other: false, itemId: amox.id, name: amox.name, unitCost: amox.cost, qty: 2, unitPrice: amox.prices[0], amount: round2_(2 * amox.prices[0]) }];
+        var shipLines = [{ lineId: rid + '-S1', itemId: vitC.id, name: vitC.name, loc: vitC.loc, qty: 2, unitCost: vitC.cost, salePrice: seedPrice(vitC, salesP, 2).price, status: 'pending', billedAt: '', billedBy: '' }];
         var salesPct = salesP.commissionRate;
         var row = {
           RID: rid, Date: date, PatientID: pid, PatientName: patient.name, Phone: patient.phone, ServiceCategory: '', Detail: 'ตัวอย่างครบวงจร: โบท็อกซ์ + ฟิลเลอร์ (แพทย์ 2 ท่าน) พร้อมโปรโมชัน',
@@ -6226,7 +6264,9 @@ function seedDemoData(token) {
           SupplierPayAmount: round2_(extraLines[0].amount + 300), OpdImageFileId: '',
           UseSupplies: 'TRUE', UseOwnMed: 'FALSE', OwnMedJSON: '[]', UseDepositUse: 'FALSE', DepositUseJSON: '[]', UseMessenger: 'FALSE', MessengerJSON: '[]',
           StockApplied: 'TRUE', WithdrawJSON: JSON.stringify(wdItems), UseProcedure: 'TRUE',
-          ProcedureJSON: JSON.stringify(procLines.map(function (l) { return { procId: l.proc.id, name: l.proc.name, price: l.proc.price, amount: l.amount, doctorId: l.doctor.id }; }))
+          ProcedureJSON: JSON.stringify(procLines.map(function (l) { return { procId: l.proc.id, name: l.proc.name, price: l.proc.price, amount: l.amount, doctorId: l.doctor.id }; })),
+          UseShip: 'TRUE', ShipJSON: JSON.stringify(shipLines), UseMsgIn: 'FALSE', MsgInJSON: '[]',
+          UseOral: 'TRUE', OralJSON: JSON.stringify(oralLines), OralAmount: oralLines[0].amount, OralCost: round2_(2 * amox.cost)
         };
         var entries = procLines.map(function (l) { return { doctorId: l.doctor.id, base: l.amount }; }).concat([{ doctorId: dB.id, extra: promo.price * promo.doctorSharePct / 100 }]);
         applyDoctorShares_(row, buildDoctorShares_(entries, seedDoctorById));
