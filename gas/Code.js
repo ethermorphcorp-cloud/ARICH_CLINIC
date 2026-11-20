@@ -427,10 +427,12 @@ function doGet(e) {
   if (page === 'stock') {
     return renderStockPage_(e.parameter.t, e.parameter.q);
   }
-  var tpl = HtmlService.createTemplateFromFile('index');
-  tpl.loginImageUrl = getLoginImageUrl_();
-  tpl.defaultLogoUrl = DEFAULT_LOGO_DATA_URI;
-  return tpl.evaluate()
+  // The app page is ~650 KB with only these two values to fill in, so it is served as plain HTML (no template
+  // compile/evaluate of the whole file), and the login image comes from CacheService (no Sheets/Drive on most loads).
+  var html = HtmlService.createHtmlOutputFromFile('index').getContent()
+    .replace("<?!= JSON.stringify(loginImageUrl || '') ?>", function () { return JSON.stringify(getLoginImageUrlCached_()); })
+    .replace("<?!= JSON.stringify(defaultLogoUrl || '') ?>", function () { return JSON.stringify(DEFAULT_LOGO_DATA_URI || ''); });
+  return HtmlService.createHtmlOutput(html)
     .setTitle('ARICH CLINIC | ระบบบริหารคลินิก')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
@@ -5611,6 +5613,19 @@ function getPhotoUrl(token, fileId) {
  * (returns '') so a bad/missing image or an un-setup project never breaks
  * the login page itself.
  */
+/** getLoginImageUrl_() through CacheService (6h; cleared when the image changes). An image too big for one cache
+ *  entry (~100 KB) is read live each time, as before. */
+var LOGIN_IMAGE_CACHE_KEY_ = 'LOGIN_IMAGE_V1';
+function getLoginImageUrlCached_() {
+  var cache = CacheService.getScriptCache();
+  var hit = cache.get(LOGIN_IMAGE_CACHE_KEY_);
+  if (hit != null) return hit === '-' ? '' : hit;
+  var url = getLoginImageUrl_() || '';
+  try { cache.put(LOGIN_IMAGE_CACHE_KEY_, url || '-', CONFIG.CACHE.MASTER_DATA_TTL); } catch (e) { /* too large — read live next time */ }
+  return url;
+}
+function invalidateLoginImageCache_() { CacheService.getScriptCache().remove(LOGIN_IMAGE_CACHE_KEY_); }
+
 function getLoginImageUrl_() {
   try {
     var rows = getRows_(getSheet_(CONFIG.SHEETS.CLINIC_SETTINGS));
@@ -5673,6 +5688,7 @@ function removeClinicImage_(token, key) {
 function setLoginImage(token, fileId) {
   return safeCall_(function () {
     var url = setClinicImage_(token, 'loginImageFileId', fileId);
+    invalidateLoginImageCache_();
     return { ok: true, data: { url: url } };
   });
 }
@@ -5681,6 +5697,7 @@ function setLoginImage(token, fileId) {
 function removeLoginImage(token) {
   return safeCall_(function () {
     removeClinicImage_(token, 'loginImageFileId');
+    invalidateLoginImageCache_();
     return { ok: true };
   });
 }

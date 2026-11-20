@@ -7,7 +7,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@300;400;500;600;700&family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0&display=swap" rel="stylesheet">
+<!-- Icon font trimmed to the icons the app uses (13 KB instead of 367 KB). A new icon name must be added to icon_names
+     (alphabetical, comma-separated) or it shows as plain text. -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0&icon_names=add,add_a_photo,add_circle,adjust,arrow_forward,assessment,assignment,backspace,badge,block,broken_image,calendar_month,cancel,cases,category,check,check_circle,chevron_left,chevron_right,close,css,delete,description,diversity_3,done_all,download,edit,edit_note,email,error,expand_less,expand_more,fact_check,female,function,group,groups,help,history,history_edu,info,input,inventory,inventory_2,landscape,list,local_hospital,local_offer,local_shipping,lock,lock_reset,login,logout,male,medical_services,medication,note,notes,paid,password,payment,payments,pending,person,person_add,person_off,phone,photo,photo_camera,picture_as_pdf,pill,portrait,print,procedure,receipt,receipt_long,refresh,report,request_quote,resize,schedule,script,search,select,sell,send,settings,space_dashboard,stethoscope,sticky_note_2,table,table_rows,tabs,task_alt,trending_up,tune,undo,unfold_less,unfold_more,update,upload,upload_file,vaccines,view_kanban,visibility,visibility_off,warning&display=swap" rel="stylesheet">
 <style>
 /* ===================== Design tokens ===================== */
 :root{
@@ -603,7 +605,7 @@ input:disabled,input[readonly],select:disabled,textarea:disabled,textarea[readon
 <div id="pdfPreviewRoot"></div>
 <div id="orderPanelRoot"></div>
 <div id="receiptPreviewRoot"></div>
-<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.26.25"></script>
 <script>
 var LOGIN_IMAGE_URL = <?!= JSON.stringify(loginImageUrl || '') ?>;
 var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
