@@ -1722,7 +1722,16 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       return ((res.data && res.data.items) || []).map(function (o) { return { id: o.id, primary: o.supplier, secondary: o.date + ' · ' + money(o.totalAmount), commitText: o.supplier }; });
     });
   }
+  function pcheckSuggestionsAsync(q) {
+    return call('listPurchaseChecks', session.token, { status: state.pcheck.tab, page: 1, pageSize: 6, q: q }, gsOpts({ quiet: true })).then(function (res) {
+      return ((res.data && res.data.items) || []).map(function (o) {
+        return { id: o.id, primary: o.id + ' · ' + o.supplier, secondary: o.date + ' · ' + o.lines.map(function (l) { return l.itemName; }).slice(0, 3).join(', '), commitText: o.id };
+      });
+    });
+  }
   var SEARCH_SCOPES = {
+    withdraw: { qPath: 'withdraw.q', suggestPath: 'withdraw.searchSuggest', placeholder: 'ค้นหาชื่อคนไข้ / เบอร์โทร / HN', suggestFn: patientLikeSuggestions, commit: function () { state.withdraw.page = 1; state.withdraw.reloading = true; render(); loadWithdrawals(); } },
+    pcheck: { qPath: 'pcheck.q', suggestPath: 'pcheck.searchSuggest', placeholder: 'ค้นหาเลขที่ / ผู้จำหน่าย / ชื่อสินค้า...', suggestFnAsync: pcheckSuggestionsAsync, commit: function () { state.pcheck.page = 1; loadPurchaseChecks(); } },
     patients: { qPath: 'patients.q', suggestPath: 'patients.searchSuggest', placeholder: 'ค้นหาชื่อ เบอร์โทร หรือ HN...', suggestFn: patientLikeSuggestions, commit: function () { state.patients.page = 1; loadPatients(); } },
     records: { qPath: 'records.q', suggestPath: 'records.searchSuggest', placeholder: 'ค้นหาชื่อคนไข้/เบอร์โทร/HN...', suggestFn: patientLikeSuggestions, commit: function () { state.records.page = 1; loadRecords(); } },
     stock: { qPath: 'stock.q', suggestPath: 'stock.searchSuggest', placeholder: 'ค้นหาสินค้า...', suggestFn: stockSuggestions, commit: function () { state.stock.page = 1; loadStock(); } },
@@ -3510,12 +3519,11 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     if ((Number(l.qtyUsed) || 0) > (Number(l.qtyIn) || 0)) return '<span style="font-size:12px;color:var(--red-dark)">ใช้มากกว่ารับเข้า</span>';
     if (!left) return '<span style="font-size:12px;color:var(--muted)">ใช้หมด</span>';
     var canDep = !l.other && !!l.itemId, keep = canDep && l.keep === 'deposit' ? 'deposit' : 'return';
-    var seg = function (val, label) {
-      var on = keep === val, dis = val === 'deposit' && !canDep;
-      return '<button type="button" class="btn' + (on ? ' btn-primary' : '') + '" data-action="msgin-keep" data-arg="' + i + ':' + val + '"' +
-        (dis ? ' disabled title="ฝากได้เฉพาะยาที่เลือกจากสต๊อก"' : '') + ' style="padding:5px 10px;font-size:12px' + (dis ? ';opacity:.45;cursor:not-allowed' : '') + '">' + label + '</button>';
-    };
-    return '<div style="display:flex;align-items:center;gap:6px"><b style="min-width:24px">' + left + '</b>' + seg('deposit', 'ฝาก') + seg('return', 'รับกลับ') + '</div>' +
+    // Switch on = ฝาก (into the customer's ยาฝาก), off = รับกลับ; ฝาก needs a stock-listed ยา.
+    var dep = keep === 'deposit';
+    return '<div style="display:flex;align-items:center;gap:8px"><b style="min-width:24px">' + left + '</b>' +
+      toggleSwitchHtml(i, dep, 'msgin-keep', canDep ? (dep ? 'เปลี่ยนเป็น รับกลับ' : 'เปลี่ยนเป็น ฝาก') : 'ฝากได้เฉพาะยาที่เลือกจากสต๊อก', !canDep) +
+      '<span style="font-size:12.5px;font-weight:600;color:' + (dep ? 'var(--green-dark)' : 'var(--text-2)') + '">' + (dep ? 'ฝาก' : 'รับกลับ') + '</span></div>' +
       (keep === 'deposit' ? '<input type="date" value="' + esc(l.expiry || '') + '" data-bind="msgInItems.' + i + '.expiry" title="วันหมดอายุยาฝาก" style="' + inputStyle + ';padding:6px 8px;font-size:12px;margin-top:6px">' : '');
   }
   function patchMsgInLeft(i) {
@@ -5117,9 +5125,6 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       state.withdraw.list = res.data; state.withdraw.reloading = false; render();
     });
   }
-  var onWithdrawSearch = debounce(function (q) {
-    state.withdraw.q = q; state.withdraw.page = 1; state.withdraw.reloading = true; render(); loadWithdrawals();
-  }, 300);
   /** The จัดการ menu of a withdrawal group: go to its record (or start one), and (admin) delete a line. */
   function wdGroupActions(g) {
     var acts = [];
@@ -5208,7 +5213,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     var th = 'padding:10px 12px;white-space:nowrap';
     return '' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center">' +
-        searchInputHtml('wdSearch', state.withdraw.q, 'ค้นหาชื่อคนไข้ / เบอร์โทร / HN', 'window.__arich.onWithdrawSearch(this.value)', 'width:280px') +
+        searchScopeBoxHtml('withdraw', '280px') +
         '<button id="ddWdSales" class="btn" data-action="dd-wd-sales">' + esc((wdSalesOptions().filter(function (o) { return o.value === state.withdraw.salesId; })[0] || {}).label || 'เซลล์ทั้งหมด') + ' <span class="ms">expand_more</span></button>' +
         '<button id="ddWdStatus" class="btn" data-action="dd-wd-status">' + esc((statusOpts.filter(function (o) { return o.value === state.withdraw.visitStatus; })[0] || {}).label || 'สถานะการรักษาทั้งหมด') + ' <span class="ms">expand_more</span></button>' +
         '<button class="btn btn-primary" style="margin-left:auto" data-action="new-withdraw"><span class="ms">add</span> เบิกยา</button>' +
@@ -6342,7 +6347,6 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     if (tab === state.pcheck.tab) return;
     var p = state.pcheck; p.tab = tab; p.page = 1; p.list = swrGet(pcheckKey()); render(); loadPurchaseChecks();
   }
-  var onPurchaseCheckSearch = debounce(function (q) { state.pcheck.q = q; state.pcheck.page = 1; loadPurchaseChecks(); }, 300);
   /** The stock a PO line goes into, by name (สต๊อกเวชภัณฑ์ / the ยา stock's own name). */
   function pcheckStockLabel(l) { return stockKeyName(l.stock); }
   function purchaseCheckTemplate() {
@@ -6366,7 +6370,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       }).join(''));
     return tabBar([{ id: 'pending', label: 'รอตรวจรับ' + (p.pending ? ' (' + p.pending + ')' : '') }, { id: 'received', label: 'ตรวจรับแล้ว' }], p.tab, 'pcheck-tab') +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">' +
-        searchInputHtml('pcheckSearch', p.q, 'ค้นหาเลขที่ / ผู้จำหน่าย / ชื่อสินค้า...', 'window.__arich.onPurchaseCheckSearch(this.value)', 'max-width:300px') + '</div>' +
+        searchScopeBoxHtml('pcheck', '300px') + '</div>' +
       listCardWrap('<div style="overflow-x:auto"><table class="table" style="width:100%;border-collapse:collapse">' +
         '<thead><tr style="text-align:left;font-size:12px;color:var(--muted);background:var(--hover-bg)">' +
           '<th style="' + th + '">วันที่สั่ง</th><th style="' + th + '">ผู้จำหน่าย / เซลล์</th><th style="' + th + '">รายการสินค้า (จำนวนที่สั่ง)</th><th style="' + th + '">ผู้สร้าง</th><th style="' + th + '">สถานะ</th><th></th>' +
@@ -6442,8 +6446,10 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
    * app (Doctors/Sales/Staff all edit status via a modal dropdown/checkbox
    * instead), so this is a purpose-built control for the table row itself,
    * per the client's "สถานะ (toggle, active/in active)" spec. */
-  function toggleSwitchHtml(id, checked, action) {
-    return '<span data-action="' + (action || 'toggle-promotion') + '" data-arg="' + esc(id) + '" role="button" title="' + (checked ? 'ปิดใช้งาน' : 'เปิดใช้งาน') + '" style="display:inline-block;width:38px;height:22px;border-radius:11px;cursor:pointer;position:relative;background:' + (checked ? 'var(--green)' : 'var(--border)') + ';transition:background .15s;vertical-align:middle">' +
+  /** title: hover text (default เปิด/ปิดใช้งาน); disabled: drawn faded, not clickable. */
+  function toggleSwitchHtml(id, checked, action, title, disabled) {
+    return '<span' + (disabled ? '' : ' data-action="' + (action || 'toggle-promotion') + '" data-arg="' + esc(id) + '"') + ' role="switch" aria-checked="' + (checked ? 'true' : 'false') + '"' + (disabled ? ' aria-disabled="true"' : '') +
+      ' title="' + esc(title || (checked ? 'ปิดใช้งาน' : 'เปิดใช้งาน')) + '" style="display:inline-block;flex:none;width:38px;height:22px;border-radius:11px;cursor:' + (disabled ? 'not-allowed;opacity:.45' : 'pointer') + ';position:relative;background:' + (checked ? 'var(--green)' : 'var(--border)') + ';transition:background .15s;vertical-align:middle">' +
       '<span style="position:absolute;top:2px;left:' + (checked ? '18px' : '2px') + ';width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(74,43,49,.3);transition:left .15s"></span></span>';
   }
   // Round 15 item 5: promotions are already loaded whole (state.promotions.list
@@ -7262,7 +7268,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       case 'add-line-row': addLineRow(arg); break;
       case 'remove-line-row': removeLineRow(arg); break;
       case 'line-pick-stock': setLineOther(arg, false); break;
-      case 'msgin-keep': (function () { var mk = String(arg).split(':'), mkLine = state.draft && state.draft.msgInItems[Number(mk[0])]; if (mkLine) { mkLine.keep = mk[1]; patchMsgInLeft(Number(mk[0])); } })(); break;
+      case 'msgin-keep': (function () { var mkLine = state.draft && state.draft.msgInItems[Number(arg)]; if (mkLine) { mkLine.keep = mkLine.keep === 'deposit' ? 'return' : 'deposit'; patchMsgInLeft(Number(arg)); } })(); break;
       case 'add-supply-row': addSupplyRow(); break;
       case 'remove-supply-row': removeSupplyRow(Number(arg)); break;
       case 'add-medicine-row': addMedicineRow(); break;
@@ -7721,8 +7727,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   /* Expose the handful of functions used by inline oninput= attributes (search boxes need live typing without full re-render churn on every keystroke going through data-action). */
   window.__arich = {
     onListSearchInput: onListSearchInput,
-    onPatientSuggestSearch: onPatientSuggestSearch, onPromotionSearch: onPromotionSearch, onWithdrawSearch: onWithdrawSearch,
-    onProcedureSearch: onProcedureSearch, onDepositSearch: onDepositSearch, onStockSumSearch: onStockSumSearch, onPurchaseCheckSearch: onPurchaseCheckSearch
+    onPatientSuggestSearch: onPatientSuggestSearch, onPromotionSearch: onPromotionSearch,
+    onProcedureSearch: onProcedureSearch, onDepositSearch: onDepositSearch, onStockSumSearch: onStockSumSearch
   };
 
   /* ---------------------------------------------------------------- */
