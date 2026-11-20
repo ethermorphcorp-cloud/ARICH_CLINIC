@@ -1977,9 +1977,12 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       ? '<div style="position:absolute;left:0;right:0;top:' + yZero + 'px;border-top:1px dashed var(--muted-4,#D3C3C5)"></div>' : '';
     var monthLabels = rows.map(function (r, i) {
       var leftPct = n > 1 ? ((i + 0.5) / n) * 100 : 50;
-      return '<div style="position:absolute;left:' + leftPct + '%;top:0;font-size:9.5px;color:var(--muted);white-space:nowrap;transform:translateX(-50%) rotate(-40deg);transform-origin:top center">' + esc(monthLabelFull(r.month)) + '</div>';
+      // Flat, two lines (month / year) below the axis, so nothing tips up into the plot.
+      var full = monthLabelFull(r.month), cut = full.indexOf('-');
+      return '<div title="' + esc(full) + '" style="position:absolute;left:' + leftPct + '%;top:6px;font-size:9.5px;line-height:1.3;color:var(--muted);white-space:nowrap;text-align:center;transform:translateX(-50%)">' +
+        esc(full.substring(cut + 1)) + '<br>' + esc(full.substring(0, cut)) + '</div>';
     }).join('');
-    var axisLeft = '<div style="position:relative;width:46px;height:' + CH + 'px;flex:none;font-size:9.5px;color:var(--muted);text-align:right">' +
+    var axisLeft = '<div style="position:relative;width:46px;height:' + CH + 'px;flex:none;font-size:9.5px;color:var(--muted);text-align:right;white-space:nowrap">' +
       '<span style="position:absolute;top:-5px;right:6px">' + money(maxVal) + '</span>' +
       (minVal < 0 ? '<span style="position:absolute;bottom:-5px;right:6px">' + money(minVal) + '</span>'
         : '<span style="position:absolute;bottom:' + (CH - yZero - 5) + 'px;right:6px">฿ 0</span>') +
@@ -2043,7 +2046,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     var legend = '<div style="display:flex;gap:12px;font-size:11px;color:var(--muted);flex-wrap:wrap;justify-content:flex-end">' +
       bars.map(function (sr) { return '<span><span style="display:inline-block;width:8px;height:8px;background:' + sr.color + ';border-radius:2px;margin-right:4px;vertical-align:middle"></span>' + esc(sr.label) + '</span>'; }).join('') +
       '<span><span style="display:inline-block;width:14px;height:2px;background:' + line.color + ';margin-right:4px;vertical-align:middle"></span>' + esc(line.label) + '</span></div>';
-    var axis = '<div style="position:relative;width:52px;height:' + CH + 'px;flex:none;font-size:9.5px;color:var(--muted);text-align:right">' +
+    var axis = '<div style="position:relative;width:52px;height:' + CH + 'px;flex:none;font-size:9.5px;color:var(--muted);text-align:right;white-space:nowrap">' +
       '<span style="position:absolute;top:-5px;right:6px">' + money(maxVal) + '</span>' +
       (minVal < 0 ? '<span style="position:absolute;bottom:-5px;right:6px">' + money(minVal) + '</span>' : '<span style="position:absolute;bottom:-5px;right:6px">฿ 0</span>') + '</div>';
     var sum = function (k) { return rows.reduce(function (t, r) { return t + (Number(r[k]) || 0); }, 0); };
