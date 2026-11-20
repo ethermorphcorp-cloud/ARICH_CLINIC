@@ -350,6 +350,9 @@ button,input,textarea,select{font-family:inherit}
 /* Wider variant of .side-panel — the patient detail panel (item 4) carries a
    visit-history table that's cramped at the default 440px width. */
 .side-panel.side-panel-wide{width:600px}
+/* Record panel footer: every action on one line, sharing the 440px width (never wraps to a second row). */
+.panel-actions{display:flex;flex-wrap:nowrap;justify-content:flex-end;gap:6px;padding:12px 18px;border-top:1px solid var(--border);flex:none}
+.panel-actions .btn{flex:1 1 auto;min-width:0;justify-content:center;gap:6px;padding:10px 10px}
 /* The stock history panel opens ปรับสต๊อก / แก้ไขรายการ modals on top of
    itself, so it sits below the modal layer (2000) instead of above it. */
 #stockPanelRoot .side-panel-backdrop{z-index:1900}
@@ -1653,24 +1656,30 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
    * handler, so the line's existing linking (itemId, unit, ราคาขาย tier,
    * captions) runs unchanged; the input stays free text for names not in stock.
    */
-  function medPickOptions(type, q, loc) {
+  function medPickOptions(type, q, loc, namesOnly) {
     // loc = the line's own Stock A/B dropdown: only that stock's items, shown by plain name.
-    var lab = function (s) { return loc ? s.name : (s.label || s.name); };
+    // namesOnly (ถือยาเข้า — the customer's own ยา, not taken from stock): each name once, no stock left.
+    var lab = function (s) { return loc || namesOnly ? s.name : (s.label || s.name); };
     var items = stockItemsOfType(type, loc), ql = String(q || '').trim().toLowerCase();
+    if (namesOnly) {
+      var seen = {};
+      items = items.filter(function (s) { var k = String(s.name).toLowerCase(); return seen[k] ? false : (seen[k] = true); });
+    }
     var exact = items.some(function (s) { return lab(s).toLowerCase() === ql; });
     return items.filter(function (s) { return !ql || exact || (lab(s) + ' ' + (s.category || '')).toLowerCase().indexOf(ql) > -1; }).map(function (s) {
+      if (namesOnly) return { value: s.id, label: lab(s), sub: s.unit || '' };
       var left = Number(s.qty) || 0;
       return { value: s.id, label: lab(s), sub: left > 0 ? 'คงเหลือ ' + left + (s.unit ? ' ' + s.unit : '') : 'หมด', subWarn: left <= 0 };
     });
   }
   function openMedPicker(el) {
     if (!el || !el.id) return;
-    var type = el.getAttribute('data-med-pick'), loc = el.getAttribute('data-med-loc') || '';
-    openPortal(el.id, medPickOptions(type, el.value, loc), function (id) {
+    var type = el.getAttribute('data-med-pick'), loc = el.getAttribute('data-med-loc') || '', namesOnly = el.hasAttribute('data-med-names');
+    openPortal(el.id, medPickOptions(type, el.value, loc, namesOnly), function (id) {
       var item = stockItemsOfType(type, loc).filter(function (s) { return s.id === id; })[0];
       var input = document.getElementById(el.id);
       if (!item || !input) return;
-      input.value = loc ? item.name : (item.label || item.name);
+      input.value = loc || namesOnly ? item.name : (item.label || item.name);
       input.dispatchEvent(new Event('input', { bubbles: true })); // untrusted: the handler links the line, no re-open
     }, null);
   }
@@ -2258,7 +2267,6 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         '<div class="card" style="border:1px solid var(--border);border-radius:var(--r);overflow:hidden">' + rows + '</div>' +
       '</div>' +
       '<div style="padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex:none">' +
-        '<button class="btn" data-action="close-patient-panel">ปิด</button>' +
         '<button class="btn btn-primary" data-action="patient-panel-edit">แก้ไขประวัติ</button>' +
       '</div>';
     return sidePanelShell('close-patient-panel', body, 'side-panel-wide');
@@ -2958,17 +2966,12 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
           '</div>' +
         '</div>' +
       '</div>' +
-      // Two rows so nothing spills out of the 440px panel: the document / edit actions on top, ปิด (left) and ชำระเงิน (right) below.
-      '<div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px;flex:none">' +
-        '<div style="display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px">' +
-          '<button class="btn" data-action="print-opd-sheet" data-arg="' + esc(r.id) + '"><span class="ms">description</span> ใบ OPD (A5)</button>' +
-          '<button class="btn" data-action="record-panel-receipt" data-arg="' + esc(r.id) + '"><span class="ms">print</span> ออกใบเสร็จ</button>' +
-          (canEditVisit(r.visitStatus) || (visitStatusKey(r.visitStatus) === 'completed' && isAdmin()) ? '<button class="btn' + (r.status === 'unpaid' ? '' : ' btn-primary') + '" data-action="record-panel-edit" data-arg="' + esc(r.id) + '">แก้ไข</button>' : '') +
-        '</div>' +
-        '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">' +
-          '<button class="btn" data-action="close-record-panel">ปิด</button>' +
-          (r.status === 'unpaid' && visitStatusKey(r.visitStatus) !== 'waiting_payment' ? '' : '<button class="btn' + (r.status === 'unpaid' ? ' btn-primary' : '') + '" data-action="pay-record" data-arg="' + esc(r.id) + '"><span class="ms">payments</span> ชำระเงิน</button>') +
-        '</div>' +
+      // No ปิด button: the header ✕ and a click outside the panel close it. One row (.panel-actions).
+      '<div class="panel-actions">' +
+        '<button class="btn" data-action="print-opd-sheet" data-arg="' + esc(r.id) + '"><span class="ms">description</span> ใบ OPD (A5)</button>' +
+        '<button class="btn" data-action="record-panel-receipt" data-arg="' + esc(r.id) + '"><span class="ms">print</span> ออกใบเสร็จ</button>' +
+        (canEditVisit(r.visitStatus) || (visitStatusKey(r.visitStatus) === 'completed' && isAdmin()) ? '<button class="btn' + (r.status === 'unpaid' ? '' : ' btn-primary') + '" data-action="record-panel-edit" data-arg="' + esc(r.id) + '">แก้ไข</button>' : '') +
+        (r.status === 'unpaid' && visitStatusKey(r.visitStatus) !== 'waiting_payment' ? '' : '<button class="btn' + (r.status === 'unpaid' ? ' btn-primary' : '') + '" data-action="pay-record" data-arg="' + esc(r.id) + '"><span class="ms">payments</span> ชำระเงิน</button>') +
       '</div>';
     return body;
   }
@@ -3158,8 +3161,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
           valueColor: netPositive ? 'var(--green-dark)' : 'var(--red-dark)'
         }) +
       '</div>' +
-      '<div style="padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:space-between;gap:8px;flex:none">' +
-        '<button class="btn" data-action="close-day-panel">ปิด</button>' +
+      '<div style="padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex:none">' +
         '<button class="btn btn-primary" data-action="day-panel-send-line"' + (st.lineSending ? ' disabled' : '') + '>' +
           (st.lineSending ? '<span class="spin"></span> กำลังส่ง...' : '<span class="ms">send</span> ส่งข้อมูลไป LINE') +
         '</button>' +
@@ -3737,15 +3739,6 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         '<button class="btn" data-action="add-pending-withdrawals"><span class="ms">add</span> ดึงรายการเบิก</button>' +
       '</div>';
 
-    // Name suggestions for the two stock-backed groups below come from a
-    // native <datalist> of that stock type — the input stays free text, so
-    // a name that isn't in stock can still be typed.
-    function stockDatalist(id, type) {
-      return '<datalist id="' + id + '">' + stockItemsOfType(type).map(function (s) {
-        return '<option value="' + esc(s.name) + '">' + esc(s.category + (s.unit ? ' · ' + s.unit : '')) + '</option>';
-      }).join('') + '</datalist>';
-    }
-
     var numInput = function (path, v, placeholder) {
       return '<input type="number" min="0" step="any" value="' + esc(v == null ? '' : v) + '" data-bind="' + path + '" style="' + inputStyle + ';padding:9px 6px" placeholder="' + esc(placeholder || '') + '">';
     };
@@ -3826,7 +3819,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     // รายการถือยาเข้า (ลูกค้านำยามาเอง) — not charged, no stock.
     var ownMedRows = d.ownMedItems.map(function (m, i) {
       return gridRow('minmax(0,1fr) 80px 40px', [
-        '<input type="text" list="dlMedicineStock" autocomplete="off" placeholder="ชื่อยา" value="' + esc(m.name) + '" data-bind="ownMedItems.' + i + '.name" style="' + inputStyle + '">',
+        '<input type="text" id="ownMedPick' + i + '" data-med-pick="medicine" data-med-names autocomplete="off" placeholder="ชื่อยา" value="' + esc(m.name) + '" data-bind="ownMedItems.' + i + '.name" style="' + inputStyle + '">',
         numInput('ownMedItems.' + i + '.qty', m.qty, 'จำนวน'), removeBtn('remove-line-row', 'ownMedItems:' + i)
       ]);
     }).join('');
@@ -3962,7 +3955,6 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         (d.useOther ? otherRows + '<button class="btn" data-action="add-other-row" style="margin-bottom:6px"><span class="ms">add</span> เพิ่มรายการ</button>' : '')) +
 
       baPhotos + opdPhotoBlock +
-      stockDatalist('dlSupplyStock', 'supply') + stockDatalist('dlMedicineStock', 'medicine') +
 
       // Round 14 item 1.4: หมายเหตุ field removed entirely. วิธี/สถานะการชำระเงิน
       // moved to the separate ชำระเงิน step (paymentModalBody).
@@ -4459,7 +4451,6 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       '</div>' +
       '<div style="flex:1;overflow:auto;padding:12px 16px">' + table + '</div>' +
       '<div style="padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex:none">' +
-        '<button class="btn" data-action="close-stock-panel">ปิด</button>' +
         '<button class="btn btn-primary" data-action="stock-adjust" data-arg="' + esc(it.id) + '"><span class="ms">tune</span> ปรับสต๊อก</button>' +
       '</div>';
     return sidePanelShell('close-stock-panel', body, 'side-panel-wide');
@@ -4596,8 +4587,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         '<div style="font-size:13px;margin-top:6px">เปลี่ยนแปลงสุทธิ <b style="color:' + (p.change > 0 ? 'var(--green-dark)' : p.change < 0 ? 'var(--red-dark)' : 'inherit') + '">' + esc(signed(p.change)) + '</b> · คงเหลือสิ้นวัน <b>' + esc(p.remaining) + ' ' + esc(it.unit || '') + '</b></div></div>' +
         '<button data-action="close-stock-panel" style="border:none;background:none;cursor:pointer"><span class="ms">close</span></button>' +
       '</div>' +
-      '<div style="flex:1;overflow:auto;padding:14px 18px">' + list + '</div>' +
-      '<div style="padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;flex:none"><button class="btn" data-action="close-stock-panel">ปิด</button></div>';
+      '<div style="flex:1;overflow:auto;padding:14px 18px">' + list + '</div>';
     return sidePanelShell('close-stock-panel', body);
   }
 
@@ -5369,7 +5359,6 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         '<div class="card" style="border:1px solid var(--border);border-radius:var(--r);overflow:hidden">' + mv + '</div>' +
       '</div>' +
       '<div style="padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex:none">' +
-        '<button class="btn" data-action="close-deposit-panel">ปิด</button>' +
         '<button class="btn btn-primary" data-action="edit-deposit" data-arg="' + esc(l.id) + '"><span class="ms">edit</span> แก้ไข</button>' +
       '</div>';
     return sidePanelShell('close-deposit-panel', body, 'side-panel-wide');
@@ -6040,10 +6029,9 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         '<div style="font-size:13px;font-weight:700;margin:14px 0 8px">รายการสินค้า</div>' +
         '<div class="card" style="border:1px solid var(--border);border-radius:var(--r);overflow:hidden">' + lines + '</div>' +
       '</div>' +
-      '<div style="padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex:none">' +
-        '<button class="btn" data-action="close-order-panel">ปิด</button>' +
-        (o.status === 'pending' ? '<button class="btn btn-primary" data-action="order-panel-edit" data-arg="' + esc(o.id) + '"><span class="ms">edit</span> แก้ไข</button>' : '') +
-      '</div>';
+      (o.status !== 'pending' ? '' : '<div style="padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex:none">' +
+        '<button class="btn btn-primary" data-action="order-panel-edit" data-arg="' + esc(o.id) + '"><span class="ms">edit</span> แก้ไข</button>' +
+      '</div>');
     return sidePanelShell('close-order-panel', body, 'side-panel-wide');
   }
   function newOrderModal() { openModal('order', { type: 'general', salesId: '', date: todayStr(), supplier: '', lines: [{ category: (state.master.stockCategories[0] || {}).name || '', stock: 'supply', itemName: '', qty: 1, unitPrice: 0 }] }); }
