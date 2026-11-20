@@ -122,6 +122,15 @@ if (valid) {
     (data.otherItems || []).forEach(function (o, i) { items.push({ no: (i + 1), label: o.label || 'อื่นๆ', amount: Number(o.amount) || 0, sub: true }); });
   }
 
+  // รายการยาทาน — charged per line (จำนวน × ราคาต่อหน่วย).
+  if (data.oralItems && data.oralItems.length && Number(data.oralAmount) > 0) {
+    items.push({ no: lineNo++, label: 'รายการยาทาน', amount: Number(data.oralAmount) || 0, sub: false });
+    data.oralItems.forEach(function (o, i) {
+      if (!(Number(o.amount) > 0)) return;
+      items.push({ no: (i + 1), label: (o.name || 'ยาทาน') + ' × ' + (Number(o.qty) || 0) + (o.unitPrice ? ' @ ' + moneyR_(o.unitPrice) : ''), amount: Number(o.amount) || 0, sub: true });
+    });
+  }
+
   // 4. จำนวนเงินทั้งสิ้น — printed in the <tfoot>, below.
   var itemsHtml = items.map(function (it) {
     if (it.sub) {

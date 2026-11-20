@@ -903,7 +903,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     { id: 'board', label: 'ระหว่างดำเนินการ', icon: 'view_kanban', sub: 'คิวของวันนี้: รอดำเนินการ → รอพบแพทย์ → พบแพทย์ → รอชำระเงิน → เสร็จสิ้น' },
     { id: 'records', label: 'OPD', icon: 'medical_services', sub: 'บันทึกการรักษา: ยา หัตถการ เวชภัณฑ์ รายการอื่นๆ และชำระเงิน' },
     { id: 'deposits', label: 'รายการยาฝาก', icon: 'vaccines', sub: 'ยาฝากของคนไข้ จำนวนคงเหลือ และวันหมดอายุ' },
-    { id: 'reports', label: 'รายงาน', icon: 'assessment', sub: 'รายงานรายวัน และรายงานรายเซลล์' },
+    { id: 'reports', label: 'รายงาน', icon: 'assessment', sub: 'รายงานรายวัน รายเซลล์ และจัดยารอส่ง' },
     { id: 'stock', label: 'จัดการสินค้า/บริการ', icon: 'inventory_2', sub: 'รายการเวชภัณฑ์ รายการยา และรายการหัตถการ', adminOnly: true },
     { id: 'pcheck', label: 'เช็ครายการจัดซื้อ', icon: 'fact_check', sub: 'ตรวจรับสินค้าตามใบสั่งซื้อที่ admin สร้าง กรอกจำนวนที่รับจริง แล้วเพิ่มเข้าสต๊อก' },
     { id: 'expense', label: 'ค่าใช้จ่าย & จัดซื้อ', icon: 'receipt_long', sub: 'ค่าใช้จ่ายคลินิกและรายการสั่งซื้อ', adminOnly: true },
@@ -1307,7 +1307,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   /** สต๊อก: which stock, three small counts, then each item's คงเหลือ. */
   function mStockTemplate() {
     var L = state.stock.list, isMed = state.stock.type === 'medicine', sum = (L && L.summary) || null;
-    var tabOpts = [{ value: 'supply', label: 'รายการเวชภัณฑ์' }, { value: 'medicine:A', label: 'รายการยา ' + stockName('A') }, { value: 'medicine:B', label: 'รายการยา ' + stockName('B') }];
+    var tabOpts = [{ value: 'supply', label: 'รายการเวชภัณฑ์' }, { value: 'medicine:A', label: 'รายการยา ' + stockName('A') }, { value: 'medicine:B', label: 'รายการยา ' + stockName('B') }, { value: 'oral', label: 'รายการยาทาน' }];
     var stat = function (label, n, tone) { return '<div class="card m-stat ' + (tone || '') + '"><div class="lb">' + label + '</div><div class="vl">' + (sum ? esc(n) : '–') + '</div></div>'; };
     var list = !L ? mLoading() : (!L.items.length ? '<div class="card m-empty">ไม่พบรายการ</div>' : '<div class="m-list">' + L.items.map(function (s) {
       var qty = s.latestQtyRemaining != null ? s.latestQtyRemaining : s.qty;
@@ -1575,8 +1575,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     var body = modalBody(state.modal.type);
     return '' +
       '<div class="modal-backdrop" style="position:fixed;inset:0;background:rgba(74,43,49,.32);display:flex;align-items:center;justify-content:center;z-index:2000;padding:20px" data-action="close-modal-bg">' +
-        // The treatment-record form carries the wide ยา table, so it gets 1.5x the usual width.
-        '<div class="modal" style="background:var(--surface);border-radius:var(--r-lg);max-width:' + (state.modal.type === 'record' ? 960 : state.modal.type === 'order' ? 900 : 640) + 'px;width:100%;max-height:88vh;overflow:auto;padding:24px">' +
+        // The treatment-record form carries the wide ยา table, so it gets 1.5x the usual width; จัดยา-เบิกยา is wider so the Stock A/B name fits.
+        '<div class="modal" style="background:var(--surface);border-radius:var(--r-lg);max-width:' + (state.modal.type === 'record' ? 960 : state.modal.type === 'order' ? 900 : state.modal.type === 'medwithdraw' ? 800 : 640) + 'px;width:100%;max-height:88vh;overflow:auto;padding:24px">' +
           body +
         '</div>' +
       '</div>';
@@ -1675,7 +1675,11 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   function openMedPicker(el) {
     if (!el || !el.id) return;
     var type = el.getAttribute('data-med-pick'), loc = el.getAttribute('data-med-loc') || '', namesOnly = el.hasAttribute('data-med-names');
-    openPortal(el.id, medPickOptions(type, el.value, loc, namesOnly), function (id) {
+    var otherArg = el.getAttribute('data-med-other');
+    var opts = medPickOptions(type, el.value, loc, namesOnly);
+    if (otherArg) opts = opts.concat([{ value: '__other__', label: 'อื่นๆ (พิมพ์ชื่อยาเอง)', sub: '' }]);
+    openPortal(el.id, opts, function (id) {
+      if (id === '__other__') { var cur = document.getElementById(el.id); setLineOther(otherArg, true, cur ? cur.value : ''); return; }
       var item = stockItemsOfType(type, loc).filter(function (s) { return s.id === id; })[0];
       var input = document.getElementById(el.id);
       if (!item || !input) return;
@@ -2280,6 +2284,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       useProcedure: false, procedureItems: [], useWithdraw: false, withdrawItems: [],
       usePromo: false, promoItems: [], useSupplies: false, supplies: [], useMedicine: false, medicineItems: [], useOther: false, otherItems: [],
       useOwnMed: false, ownMedItems: [], useDepositUse: false, depositUseItems: [], useMessenger: false, messengerItems: [],
+      useShip: false, shipItems: [], useMsgIn: false, msgInItems: [], useOral: false, oralItems: [],
       canulaNote: '', beforePhotoIds: [], afterPhotoIds: [],
       _deposits: undefined, _oldDepositUse: {}, _origPatientId: '', _pendingWd: undefined
     };
@@ -2719,7 +2724,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     call('getRecord', session.token, id).then(function (res) {
       var d = res.data;
       d._patientQuery = d.patientName; d._patientSuggest = [];
-      ['ownMedItems', 'depositUseItems', 'messengerItems', 'procedureItems', 'withdrawItems'].forEach(function (k) { d[k] = d[k] || []; });
+      ['ownMedItems', 'depositUseItems', 'messengerItems', 'procedureItems', 'withdrawItems', 'shipItems', 'msgInItems', 'oralItems'].forEach(function (k) { d[k] = d[k] || []; });
       d.useWithdraw = d.withdrawItems.length > 0;
       // A record from before รายการหัตถการ only has its จำนวนเงินหัตถการ — show it as one line so it's kept.
       if (!d.procedureItems.length && Number(d.amount) > 0) {
@@ -2740,6 +2745,9 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         else if (!l.other && !l.loc) l.loc = 'A';
       });
       (d.messengerItems || []).forEach(function (l) { var it = l.itemId && medicineStockItem(l.itemId); if (it) l.name = it.label || l.name; });
+      // จัดยารอส่ง / messenger lines show their own Stock dropdown and the plain name; saved ยาทาน prices stay as they were.
+      d.shipItems.concat(d.msgInItems).forEach(function (l) { var it = l.itemId && medicineStockItem(l.itemId); if (it) { l.name = it.name; l.loc = it.loc || 'A'; } else if (!l.other && !l.loc) l.loc = 'A'; });
+      d.oralItems.forEach(function (l) { l._priceTyped = true; });
       d.beforePhotoIds = d.beforePhotoIds || []; d.afterPhotoIds = d.afterPhotoIds || [];
       loadRecordPhotoUrls(d.beforePhotoIds.concat(d.afterPhotoIds));
       d._toQueue = !!(opts && opts.toQueue) && (d.visitStatus === 'dispensed' || (d.visitStatus === 'pending' && !d.opdCreated));
@@ -2895,7 +2903,13 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       }) +
       chipGroup('medication', 'รายการถือยาเข้า', r.ownMedItems, function (m) { return esc(m.name) + ' ×' + esc(m.qty); }) +
       chipGroup('medication', 'รายการยาฝาก', r.depositUseItems, function (m) { return esc(m.name) + ' ×' + esc(m.qty); }) +
-      chipGroup('local_shipping', 'รายการพัสดุ', r.messengerItems, function (m) { return esc(m.name) + (m.loc ? ' [' + esc(stockName(m.loc)) + ']' : '') + ' ×' + esc(m.qty) + (m.note ? ' · ' + esc(m.note) : ''); });
+      chipGroup('local_shipping', 'รายการพัสดุ', r.messengerItems, function (m) { return esc(m.name) + (m.loc ? ' [' + esc(stockName(m.loc)) + ']' : '') + ' ×' + esc(m.qty) + (m.note ? ' · ' + esc(m.note) : ''); }) +
+      chipGroup('inventory_2', 'จัดยารอส่ง (ไม่คิดเงิน)', r.shipItems, function (m) { return esc(m.name) + (m.loc ? ' [' + esc(stockName(m.loc)) + ']' : '') + ' ×' + esc(m.qty) + (m.status === 'billed' ? ' · คิดเงินเซลล์แล้ว' : ' · รอคิดเงินเซลล์'); }) +
+      chipGroup('local_shipping', 'พัสดุ/messenger เข้าคลินิก', r.msgInItems, function (m) {
+        var left = Math.max(0, Math.round(((Number(m.qtyIn) || 0) - (Number(m.qtyUsed) || 0)) * 100) / 100);
+        return esc(m.name) + (m.other ? ' (อื่นๆ)' : '') + ' รับเข้า ' + esc(m.qtyIn) + ' (ใช้ ' + esc(m.qtyUsed) + (left ? ' · ' + (m.keep === 'deposit' ? 'ฝาก ' : 'รับกลับ ') + left + (m.expiry ? ' หมดอายุ ' + esc(m.expiry) : '') : '') + ')';
+      }) +
+      chipGroup('pill', 'รายการยาทาน', r.oralItems, function (m) { return esc(m.name) + ' ×' + esc(m.qty) + ' · ' + money(m.amount); });
     var panelThumbs = function (tag) {
       var ids = r[tag + 'PhotoIds'] || [], urls = state.records.photoUrls || {};
       if (!ids.length) return '';
@@ -3423,7 +3437,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     var otherAmount = (d.useOther ? (d.otherItems || []) : []).reduce(function (s, l) { return s + (Number(l.amount) || 0); }, 0);
     var salesShare = r2(amount * salesPct / 100);
     var medicineAmount = (d.useMedicine ? (d.medicineItems || []) : []).reduce(function (s, l) { return s + (Number(l.amount) || 0); }, 0);
-    var totalNet = r2(amount + promoAmount + canula + otherAmount + medicineAmount); // ซื้อยาเพิ่ม is charged, without sales/doctor %
+    var totalNet = r2(amount + promoAmount + canula + otherAmount + medicineAmount + oralTotal(d)); // ยาทาน too // ซื้อยาเพิ่ม is charged, without sales/doctor %
     return { salesShare: salesShare, doctors: doctors, doctorShareRaw: doctorShareRaw, totalNet: totalNet, clinicShare: r2(totalNet - salesShare - doctorShareRaw) };
   }
   /**
@@ -3475,6 +3489,48 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     if (procTotal) procTotal.textContent = money(procedureTotal(state.draft));
     var medTotal = document.getElementById('medTotal');
     if (medTotal) medTotal.textContent = money(medicineTotal(state.draft));
+    var oralTot = document.getElementById('oralTotal');
+    if (oralTot) oralTot.textContent = money(oralTotal(state.draft));
+  }
+  function oralTotal(d) {
+    return Math.round((d.useOral ? (d.oralItems || []) : []).reduce(function (s, l) { return s + (Number(l.amount) || 0); }, 0) * 100) / 100;
+  }
+  function recalcOralLine(l) { l.amount = Math.round((Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * 100) / 100; }
+  function patchOralRow(i) {
+    var l = state.draft.oralItems[i], el = document.getElementById('oralAmt' + i);
+    if (el && l) el.textContent = money(l.amount);
+    updateRecordPreview();
+  }
+  /** messenger line's ส่วนที่เหลือ cell: รับเข้า − ใช้, then ฝาก (stock-listed ยา only — a ยาฝาก lot needs one) | รับกลับ,
+   *  and วันหมดอายุ when ฝาก. */
+  function msgInLeftHtml(l, i) {
+    var left = Math.max(0, Math.round(((Number(l.qtyIn) || 0) - (Number(l.qtyUsed) || 0)) * 100) / 100);
+    if ((Number(l.qtyUsed) || 0) > (Number(l.qtyIn) || 0)) return '<span style="font-size:12px;color:var(--red-dark)">ใช้มากกว่ารับเข้า</span>';
+    if (!left) return '<span style="font-size:12px;color:var(--muted)">ใช้หมด</span>';
+    var canDep = !l.other && !!l.itemId, keep = canDep && l.keep === 'deposit' ? 'deposit' : 'return';
+    var seg = function (val, label) {
+      var on = keep === val, dis = val === 'deposit' && !canDep;
+      return '<button type="button" class="btn' + (on ? ' btn-primary' : '') + '" data-action="msgin-keep" data-arg="' + i + ':' + val + '"' +
+        (dis ? ' disabled title="ฝากได้เฉพาะยาที่เลือกจากสต๊อก"' : '') + ' style="padding:5px 10px;font-size:12px' + (dis ? ';opacity:.45;cursor:not-allowed' : '') + '">' + label + '</button>';
+    };
+    return '<div style="display:flex;align-items:center;gap:6px"><b style="min-width:24px">' + left + '</b>' + seg('deposit', 'ฝาก') + seg('return', 'รับกลับ') + '</div>' +
+      (keep === 'deposit' ? '<input type="date" value="' + esc(l.expiry || '') + '" data-bind="msgInItems.' + i + '.expiry" title="วันหมดอายุยาฝาก" style="' + inputStyle + ';padding:6px 8px;font-size:12px;margin-top:6px">' : '');
+  }
+  function patchMsgInLeft(i) {
+    var el = document.getElementById('msgInLeft' + i), l = state.draft.msgInItems[i];
+    if (el && l) el.innerHTML = msgInLeftHtml(l, i);
+  }
+  /** อื่นๆ on/off for a picker line ("group:idx"): on keeps a typed name that matched nothing; off goes back to the list. */
+  function setLineOther(arg, on, typed) {
+    var p = String(arg).split(':'), line = state.draft && (state.draft[p[0]] || [])[Number(p[1])];
+    if (!line) return;
+    var keepName = on && !line.itemId ? String(typed || '').trim() : '';
+    line.other = !!on; line.itemId = ''; line.name = keepName;
+    if (p[0] === 'msgInItems') line.keep = 'return';
+    if (p[0] === 'oralItems') { line._priceTyped = false; line.unitPrice = ''; recalcOralLine(line); }
+    render(); updateRecordPreview();
+    var focusEl = document.getElementById(on ? p[0] + 'Other' + p[1] : ({ ownMedItems: 'ownMedPick', msgInItems: 'msgInPick', oralItems: 'oralPick' })[p[0]] + p[1]);
+    if (focusEl) focusEl.focus();
   }
   function medicineTotal(d) {
     return Math.round((d.useMedicine ? (d.medicineItems || []) : []).reduce(function (s, l) { return s + (Number(l.amount) || 0); }, 0) * 100) / 100;
@@ -3653,7 +3709,10 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   var NEW_LINE = {
     ownMedItems: function () { return { name: '', qty: 1 }; },
     depositUseItems: function () { return { itemId: '', name: '', qty: 1 }; },
-    messengerItems: function () { return { itemId: '', name: '', qty: 1, note: '' }; }
+    messengerItems: function () { return { itemId: '', name: '', qty: 1, note: '' }; },
+    shipItems: function () { return { itemId: '', name: '', loc: 'A', qty: 1 }; },
+    msgInItems: function () { return { other: false, itemId: '', name: '', loc: 'A', qtyIn: 1, qtyUsed: 0, keep: 'return', expiry: '' }; },
+    oralItems: function () { return { other: false, itemId: '', name: '', qty: 1, unitPrice: '', amount: 0 }; }
   };
   function newDispenseLine(other) { return { itemId: '', name: '', loc: other ? '' : 'A', qtyDispensed: 1, qtyUsed: 1, qtyDeposit: 0, unitPrice: '', amount: 0, other: !!other }; }
   function recordModalBody() {
@@ -3777,7 +3836,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
           var dyn = dispenseDynamicHtml(m, i);
           var nameInput = m.other
             ? '<input type="text" placeholder="ชื่อยาอื่นๆ" value="' + esc(m.name) + '" data-bind="' + p + 'name" style="' + inputStyle + '">'
-            : '<div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:6px">' +
+            : '<div style="display:grid;grid-template-columns:fit-content(150px) minmax(0,1fr);gap:6px">' +
                 bindSelect(p + 'loc', [{ value: 'A', label: stockName('A') }, { value: 'B', label: stockName('B') }]) +
                 '<input type="text" id="medPick' + i + '" data-med-pick="medicine" data-med-loc="' + esc(m.loc || 'A') + '" autocomplete="off" placeholder="เลือกยาจาก ' + esc(stockName(m.loc || 'A')) + '" value="' + esc(m.name) + '" data-bind="' + p + 'name" style="' + inputStyle + '"></div>';
           return dispRow([
@@ -3817,9 +3876,16 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       '</div>';
 
     // รายการถือยาเข้า (ลูกค้านำยามาเอง) — not charged, no stock.
+    // A line set to อื่นๆ (picked from the list's last option) is a plain text box; its list button goes back to the picker.
+    var otherNameInput = function (group, i, m) {
+      return '<div style="display:flex;gap:4px;min-width:0"><input type="text" id="' + group + 'Other' + i + '" placeholder="พิมพ์ชื่อยาเอง (อื่นๆ)" value="' + esc(m.name) + '" data-bind="' + group + '.' + i + '.name" style="' + inputStyle + ';flex:1;min-width:0">' +
+        '<button type="button" class="btn" data-action="line-pick-stock" data-arg="' + group + ':' + i + '" title="กลับไปเลือกจากรายการ" style="padding:8px;flex:none"><span class="ms">list</span></button></div>';
+    };
+    var stockLocSelect = function (path) { return bindSelect(path, [{ value: 'A', label: stockName('A') }, { value: 'B', label: stockName('B') }]); };
     var ownMedRows = d.ownMedItems.map(function (m, i) {
       return gridRow('minmax(0,1fr) 80px 40px', [
-        '<input type="text" id="ownMedPick' + i + '" data-med-pick="medicine" data-med-names autocomplete="off" placeholder="ชื่อยา" value="' + esc(m.name) + '" data-bind="ownMedItems.' + i + '.name" style="' + inputStyle + '">',
+        m.other ? otherNameInput('ownMedItems', i, m) :
+        '<input type="text" id="ownMedPick' + i + '" data-med-pick="medicine" data-med-names data-med-other="ownMedItems:' + i + '" autocomplete="off" placeholder="ชื่อยา" value="' + esc(m.name) + '" data-bind="ownMedItems.' + i + '.name" style="' + inputStyle + '">',
         numInput('ownMedItems.' + i + '.qty', m.qty, 'จำนวน'), removeBtn('remove-line-row', 'ownMedItems:' + i)
       ]);
     }).join('');
@@ -3847,6 +3913,57 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         removeBtn('remove-line-row', 'messengerItems:' + i)
       ]);
     }).join('');
+    var badPick = function (m) { return m.name && !m.itemId ? ';border-color:var(--red-dark)' : ''; };
+    // จัดยารอส่ง — ยา packed for a เซลล์ to send on: Stock A/B + ยา, taken out of stock on save, not charged here
+    // (billed to the เซลล์ later — รายงานจัดยารอส่ง).
+    var shipRows = d.shipItems.map(function (m, i) {
+      var p = 'shipItems.' + i + '.';
+      return gridRow('minmax(0,1fr) 80px 40px', [
+        '<div><div style="display:grid;grid-template-columns:fit-content(150px) minmax(0,1fr);gap:6px">' + stockLocSelect(p + 'loc') +
+          '<input type="text" id="shipPick' + i + '" data-med-pick="medicine" data-med-loc="' + esc(m.loc || 'A') + '" autocomplete="off" placeholder="เลือกยาจาก ' + esc(stockName(m.loc || 'A')) + '" value="' + esc(m.name) + '" data-bind="' + p + 'name" style="' + inputStyle + badPick(m) + '"></div>' +
+          (m.status === 'billed' ? '<div style="font-size:11px;color:var(--green-dark);margin-top:3px"><span class="ms" style="font-size:13px;vertical-align:middle">check_circle</span> คิดเงินเซลล์แล้ว</div>' : '') + '</div>',
+        numInput(p + 'qty', m.qty, 'จำนวน'), removeBtn('remove-line-row', 'shipItems:' + i)
+      ]);
+    }).join('');
+    // พัสดุ/messenger เข้าคลินิก — ยา that arrives for the customer: รับเข้า / ใช้, the rest ฝาก (ยาฝาก) or รับกลับ.
+    // No stock, not charged.
+    var MSG_COLS = 'minmax(240px,1fr) 80px 80px 176px 40px';
+    var msgInRows = !d.msgInItems.length ? '' :
+      '<div style="border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden;margin-bottom:8px">' +
+        '<div style="display:grid;grid-template-columns:' + MSG_COLS + ';gap:8px;padding:8px 12px;background:var(--hover-bg)">' +
+          headCell('รายการยา', 'สต๊อก A / B หรืออื่นๆ') + headCell('จำนวนรับเข้า', 'ไม่ตัดสต๊อก') + headCell('จำนวนที่ใช้', 'ใช้วันนี้') + headCell('ส่วนที่เหลือ', 'ฝาก / รับกลับ') + '<div></div>' +
+        '</div>' +
+        d.msgInItems.map(function (m, i) {
+          var p = 'msgInItems.' + i + '.';
+          var nameCell = m.other ? otherNameInput('msgInItems', i, m) :
+            '<div style="display:grid;grid-template-columns:fit-content(150px) minmax(0,1fr);gap:6px">' + stockLocSelect(p + 'loc') +
+              '<input type="text" id="msgInPick' + i + '" data-med-pick="medicine" data-med-loc="' + esc(m.loc || 'A') + '" data-med-other="msgInItems:' + i + '" autocomplete="off" placeholder="เลือกยา หรือ อื่นๆ" value="' + esc(m.name) + '" data-bind="' + p + 'name" style="' + inputStyle + badPick(m) + '"></div>';
+          return '<div style="display:grid;grid-template-columns:' + MSG_COLS + ';gap:8px;align-items:start;padding:10px 12px;border-top:1px solid var(--border)">' +
+            dispCell(nameCell) + dispCell(numInput(p + 'qtyIn', m.qtyIn)) + dispCell(numInput(p + 'qtyUsed', m.qtyUsed)) +
+            dispCell('<div id="msgInLeft' + i + '" style="padding-top:4px">' + msgInLeftHtml(m, i) + '</div>') +
+            removeBtn('remove-line-row', 'msgInItems:' + i) +
+          '</div>';
+        }).join('') +
+      '</div>';
+    // รายการยาทาน — from the ยาทาน list (taken out of stock; ราคาขาย pre-filled, editable) or อื่นๆ. Charged, no commission.
+    var ORAL_COLS = 'minmax(220px,1fr) 74px 110px 110px 40px';
+    var oralRows = !d.oralItems.length ? '' :
+      '<div style="border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden;margin-bottom:8px">' +
+        '<div style="display:grid;grid-template-columns:' + ORAL_COLS + ';gap:8px;padding:8px 12px;background:var(--hover-bg)">' +
+          headCell('ชื่อยา', 'รายการยาทาน หรืออื่นๆ') + headCell('จำนวน', 'ตัดสต๊อก') + headCell('ราคาต่อหน่วย', 'ราคาขาย') + headCell('ยอดรวม', 'คิดเงิน', 'right') + '<div></div>' +
+        '</div>' +
+        d.oralItems.map(function (m, i) {
+          var p = 'oralItems.' + i + '.';
+          var nameCell = m.other ? otherNameInput('oralItems', i, m) :
+            '<input type="text" id="oralPick' + i + '" data-med-pick="oral" data-med-other="oralItems:' + i + '" autocomplete="off" placeholder="เลือกยาทาน หรือ อื่นๆ" value="' + esc(m.name) + '" data-bind="' + p + 'name" style="' + inputStyle + badPick(m) + '">';
+          return '<div style="display:grid;grid-template-columns:' + ORAL_COLS + ';gap:8px;align-items:center;padding:10px 12px;border-top:1px solid var(--border)">' +
+            dispCell(nameCell) + dispCell(numInput(p + 'qty', m.qty)) + dispCell(numInput(p + 'unitPrice', m.unitPrice, 'ราคา')) +
+            dispCell('<div id="oralAmt' + i + '" style="font-weight:600">' + money(m.amount) + '</div>', 'right') +
+            removeBtn('remove-line-row', 'oralItems:' + i) +
+          '</div>';
+        }).join('') +
+        '<div style="display:flex;justify-content:flex-end;gap:12px;padding:8px 52px 8px 12px;border-top:1px solid var(--border);font-size:12.5px;color:var(--text-2)">ยอดรวมยาทาน <b id="oralTotal" style="font-size:14px;color:var(--text)">' + money(oralTotal(d)) + '</b></div>' +
+      '</div>';
     var addRowBtn = function (group, label) { return '<button class="btn" data-action="add-line-row" data-arg="' + group + '" style="margin-bottom:6px"><span class="ms">add</span> ' + esc(label) + '</button>'; };
     var zoneBox = function (title, inner) {
       return '<div style="border:1px solid var(--border);border-radius:var(--r-sm);padding:2px 14px 8px;margin:14px 0">' +
@@ -3935,8 +4052,13 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         (d.useWithdraw ? (withdrawRows || '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">' + (d.patientId ? 'ไม่มีรายการจากใบเบิก' : 'เลือกคนไข้ก่อน เพื่อดึงรายการจากใบเบิก') + '</div>') : '') +
         lineGroupToggle('useMedicine', 'รายการซื้อยาเพิ่ม', 'ตัดสต๊อก · คิดเงินในยอดรับชำระ (ไม่คิดค่าคอม)') +
         (d.useMedicine ? medicineRows + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px"><button class="btn" data-action="add-medicine-row"><span class="ms">add</span> ซื้อยาเพิ่ม</button><button class="btn" data-action="add-medicine-other-row"><span class="ms">add</span> ยาอื่นๆ (ไม่มีในสต๊อก)</button></div>' : '') +
-        lineGroupToggle('useMessenger', 'รายการพัสดุ', 'ตัดสต๊อก · ไม่คิดค่ายา') +
-        (d.useMessenger ? messengerRows + addRowBtn('messengerItems', 'เพิ่มรายการ') : '')) +
+        lineGroupToggle('useShip', 'จัดยารอส่ง', 'ตัดสต๊อก · ไม่คิดเงิน · รอคิดเงินเซลล์') +
+        (d.useShip ? shipRows + addRowBtn('shipItems', 'เพิ่มรายการ') : '') +
+        lineGroupToggle('useMsgIn', 'พัสดุ/messenger เข้าคลินิก', 'ไม่ตัดสต๊อก · ไม่คิดเงิน · ที่เหลือ ฝาก หรือ รับกลับ') +
+        (d.useMsgIn ? msgInRows + addRowBtn('msgInItems', 'เพิ่มรายการ') : '') +
+        // รายการพัสดุ (old) is gone from new records; a record saved with it still shows it so it can be kept or removed.
+        (d.messengerItems && d.messengerItems.length ? lineGroupToggle('useMessenger', 'รายการพัสดุ (เดิม)', 'ตัดสต๊อก · ไม่คิดค่ายา') +
+          (d.useMessenger ? messengerRows : '') : '')) +
 
       zoneBox('2 · หัตถการ',
         lineGroupToggle('useProcedure', 'รายการหัตถการ', 'คิดส่วนแบ่งแพทย์/เซลล์') +
@@ -3951,6 +4073,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         (d.usePromo ? promoRows + '<button class="btn" data-action="add-promo-row" style="margin-bottom:6px"><span class="ms">add</span> เพิ่มรายการโปร</button>' : '') +
         '<div style="display:flex;align-items:center;gap:8px;margin:14px 0 6px">' + bindInput('useCanula', 'checkbox') + '<label style="font-weight:600;font-size:13px">ใช้ Canula (เข็มทู่)</label></div>' +
         (d.useCanula ? moneyRow('<input type="text" placeholder="หมายเหตุ Canula" value="' + esc(d.canulaNote || '') + '" data-bind="canulaNote" style="' + inputStyle + '">', 'canulaAmount', 'จำนวนเงิน Canula', '', 'recCanulaAmount') : '') +
+        lineGroupToggle('useOral', 'รายการยาทาน', 'ตัดสต๊อกยาทาน · คิดเงินในยอดรับชำระ (ไม่คิดค่าคอม)') +
+        (d.useOral ? oralRows + addRowBtn('oralItems', 'เพิ่มยาทาน') : '') +
         lineGroupToggle('useOther', 'รายการอื่นๆ') +
         (d.useOther ? otherRows + '<button class="btn" data-action="add-other-row" style="margin-bottom:6px"><span class="ms">add</span> เพิ่มรายการ</button>' : '')) +
 
@@ -4237,11 +4361,11 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       state.stock.list = res.data; state.stock.reloading = false; render();
     });
   }
-  var STOCK_TABS = [{ id: 'supply', label: 'รายการเวชภัณฑ์' }, { id: 'medicine', label: 'รายการยา' }];
+  var STOCK_TABS = [{ id: 'supply', label: 'รายการเวชภัณฑ์' }, { id: 'medicine', label: 'รายการยา' }, { id: 'oral', label: 'รายการยาทาน' }];
   // จัดการสินค้า/บริการ tabs: เวชภัณฑ์, ยา of Stock A and of Stock B (each ยา row
   // belongs to one stock), plus รายการหัตถการ (not stock — see proceduresView).
   function productTabs() {
-    return [{ id: 'supply', label: 'รายการเวชภัณฑ์' }, { id: 'medicine:A', label: 'รายการยา ' + stockName('A') }, { id: 'medicine:B', label: 'รายการยา ' + stockName('B') }, { id: 'procedure', label: 'รายการหัตถการ' }, { id: 'summary', label: 'สรุปรายการ stock' }];
+    return [{ id: 'supply', label: 'รายการเวชภัณฑ์' }, { id: 'medicine:A', label: 'รายการยา ' + stockName('A') }, { id: 'medicine:B', label: 'รายการยา ' + stockName('B') }, { id: 'oral', label: 'รายการยาทาน' }, { id: 'procedure', label: 'รายการหัตถการ' }, { id: 'summary', label: 'สรุปรายการ stock' }];
   }
   var PRICE_SOURCE_LABELS = { standard: 'Standard', group: 'Sale group', agent: 'Sale Agent' };
   function stockTabId() { return state.stock.type === 'medicine' ? 'medicine:' + state.stock.loc : state.stock.type; }
@@ -4250,7 +4374,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   // Must match STOCK_PRICE_TIERS in Code.gs — item.prices[i] is the ราคาขาย for STOCK_PRICE_TIERS[i] ชิ้น.
   var STOCK_PRICE_TIERS = [1, 3, 5, 10, 20, 50];
   var STOCK_LOG_KIND_LABELS = { update: 'อัพเดตสต๊อก', in: 'รับเข้า', out: 'เบิกออก', set: 'ปรับยอดคงเหลือ', import: 'นำเข้า CSV', opening: 'ยอดยกมา', record: 'บันทึกการรักษา', withdraw: 'จัดยา-เบิกยา', purchase: 'จัดซื้อ' };
-  function stockTypeLabel(type) { return type === 'medicine' ? 'ยา' : 'เวชภัณฑ์'; }
+  function stockTypeLabel(type) { return type === 'medicine' ? 'ยา' : type === 'oral' ? 'ยาทาน' : 'เวชภัณฑ์'; }
   function stockTab(id) {
     if (id === stockTabId()) return;
     var parts = String(id).split(':'), type = parts[0];
@@ -4277,13 +4401,17 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     var catOpts = [{ value: '', label: 'หมวดหมู่ทั้งหมด' }].concat((state.master.stockCategories || []).map(function (c) { return { value: c.name, label: c.name }; }));
     var L = state.stock.list;
     var type = state.stock.type, typeLabel = stockPageLabel();
-    var isMed = type === 'medicine', showCost = isMed && isAdmin();
-    var colCount = isMed ? (showCost ? 14 : 13) : 5;
+    var isMed = type === 'medicine', isOral = type === 'oral', showCost = (isMed || isOral) && isAdmin();
+    var colCount = isMed ? (showCost ? 14 : 13) : isOral ? (showCost ? 6 : 5) : 5;
     var rows = !L ? skelRows(colCount) :
       (!L.items.length ? '<tr><td colspan="' + colCount + '" class="empty-state">ไม่พบรายการ' + typeLabel + '</td></tr>' :
-      L.items.map(function (s) { return stockItemRowHtml(s, isMed, showCost); }).join(''));
+      L.items.map(function (s) { return isOral ? oralItemRowHtml(s, showCost) : stockItemRowHtml(s, isMed, showCost); }).join(''));
     var th = 'padding:10px 12px;white-space:nowrap';
-    var head = isMed
+    var head = isOral
+      ? '<tr style="text-align:left;font-size:12px;color:var(--muted);background:var(--hover-bg)">' +
+          '<th style="' + th + '">ชื่อยา</th><th style="' + th + '">หมวดหมู่</th><th style="' + th + '">จำนวน</th>' +
+          (showCost ? '<th style="' + th + '">ราคาทุน/หน่วย</th>' : '') + '<th style="' + th + '">ราคาขาย/หน่วย</th><th></th></tr>'
+      : isMed
       ? '<tr style="text-align:left;font-size:12px;color:var(--muted);background:var(--hover-bg)">' +
           '<th rowspan="2" style="' + th + '">ชื่อยา</th><th rowspan="2" style="' + th + '">หมวดหมู่</th><th rowspan="2" style="' + th + '">จำนวนสต๊อกขั้นต่ำ</th>' +
           // จำนวนคงเหลือ split: ยาฝาก held for patients vs. stock that can still be dispensed.
@@ -4314,6 +4442,12 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         '<div style="overflow-x:auto"><table class="table stock-table" style="width:100%;border-collapse:collapse">' +
           '<thead>' + head + '</thead>' +
           '<tbody>' + rows + '</tbody></table></div>', state.stock.reloading) + pagerHtml(L, 'stock-page');
+  }
+  /** รายการยาทาน row: ชื่อยา | หมวดหมู่ | จำนวน | ราคาทุน/หน่วย (admin) | ราคาขาย/หน่วย (prices[0]) | จัดการ. */
+  function oralItemRowHtml(s, showCost) {
+    var cells = stockItemRowHtml(s, false, false).split('<td>' + stockNumCell(s.minQty) + '</td>'); // drop จำนวนสต๊อกขั้นต่ำ
+    var prices = (showCost ? '<td>' + stockMoneyCell(s.costPrice) + '</td>' : '') + '<td>' + stockMoneyCell((s.prices || [])[0]) + '</td>';
+    return cells[0] + cells[1].replace('<td style="text-align:right;white-space:nowrap">', prices + '<td style="text-align:right;white-space:nowrap">');
   }
   function stockItemRowHtml(s, isMed, showCost) {
     var qty = s.latestQtyRemaining != null ? s.latestQtyRemaining : s.qty;
@@ -4461,7 +4595,11 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
      them in the side panel (who, which customer, how many, the document). ---- */
   var STOCK_SUM_MAX_DAYS = 30;
   function addDaysStr(d, n) { var x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); }
-  function stockSumLabel(stock) { return stock === 'supply' ? 'เวชภัณฑ์' : stockName(stock); }
+  function stockSumLabel(stock) { return stock === 'supply' ? 'เวชภัณฑ์' : stock === 'oral' ? 'ยาทาน' : stockName(stock); }
+  /** "สต๊อกเวชภัณฑ์" / "สต๊อกยาทาน" / the name of ยา Stock A or B, for a stock key. */
+  function stockKeyName(key) { return key === 'supply' ? 'สต๊อกเวชภัณฑ์' : key === 'oral' ? 'สต๊อกยาทาน' : stockName(key || 'A'); }
+  /** The stock key ('supply' | 'oral' | 'A' | 'B') of a stock suggest-cache item. */
+  function stockKeyOfItem(it) { return it.type === 'medicine' ? (it.loc || 'A') : (it.type || 'supply'); }
   function loadStockSummary() {
     var S = state.stock.sum;
     if (!S.to) S.to = todayStr();
@@ -4496,7 +4634,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         return '<option value="' + esc(o.value) + '"' + (o.value === value ? ' selected' : '') + '>' + esc(o.label) + '</option>';
       }).join('') + '</select>';
     };
-    var stockOpts = [{ value: '', label: 'ทุก stock' }, { value: 'supply', label: 'เวชภัณฑ์' }, { value: 'A', label: stockName('A') }, { value: 'B', label: stockName('B') }];
+    var stockOpts = [{ value: '', label: 'ทุก stock' }, { value: 'supply', label: 'เวชภัณฑ์' }, { value: 'A', label: stockName('A') }, { value: 'B', label: stockName('B') }, { value: 'oral', label: 'ยาทาน' }];
     var catOpts = [{ value: '', label: 'หมวดหมู่ทั้งหมด' }].concat((state.master.stockCategories || []).map(function (c) { return { value: c.name, label: c.name }; }));
     var modeBtn = function (id, text) {
       var on = S.mode === id;
@@ -4712,6 +4850,9 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         priceGrid('priceTarget.prices') +
         '<div id="stockCostWarn" style="font-size:12px;color:var(--red-dark);margin:2px 0 6px">' + belowCostWarning(d) + '</div>' +
         '<button class="btn" data-action="clear-price-target" style="margin-bottom:4px"><span class="ms">backspace</span> ล้างราคาเฉพาะ</button>';
+    } else if (d.type === 'oral') {
+      priceFields = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">' +
+        (isAdmin() ? field('ราคาทุน/หน่วย', optNum('costPrice')) : '') + field('ราคาขาย/หน่วย', optNum('prices.0')) + '</div>';
     } else if (d.type === 'medicine') {
       priceFields = (isAdmin() ? field('ราคาทุน', optNum('costPrice')) : '') +
         '<div style="margin-bottom:6px"><label style="font-size:12px;color:var(--text-2)">ราคาขาย (Standard)</label></div>' + priceGrid('prices') +
@@ -4788,7 +4929,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     { re: /ขั้นต่ำ/, key: 'minQty' }, { re: /คงเหลือ/, key: 'qty' }, { re: /ทุน/, key: 'costPrice' }
   ];
   function stockCsvHeaders(type) {
-    var h = [type === 'medicine' ? 'ชื่อยา' : 'ชื่อเวชภัณฑ์', 'หมวดหมู่', 'หน่วย', 'จำนวนสต๊อกขั้นต่ำ', 'จำนวนคงเหลือ'];
+    var h = [type === 'supply' ? 'ชื่อเวชภัณฑ์' : 'ชื่อยา', 'หมวดหมู่', 'หน่วย', 'จำนวนสต๊อกขั้นต่ำ', 'จำนวนคงเหลือ'];
+    if (type === 'oral') return h.concat(['ราคาทุน', 'ราคาขาย']); // ราคาขาย = ราคาขาย/หน่วย (the 1-ชิ้น price)
     return type === 'medicine' ? h.concat(['ราคาทุน'], STOCK_PRICE_TIERS.map(function (t) { return 'ราคาขาย จำนวน ' + t + ' ชิ้น'; })) : h;
   }
   function downloadStockCsvTemplate() {
@@ -4828,6 +4970,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     grid[hi].forEach(function (raw, ci) {
       var h = String(raw).trim();
       if (!h) return;
+      if (/^ราคาขาย$/.test(h)) { colMap[ci] = 'price1'; found.push(h); return; } // รายการยาทาน: one ราคาขาย/หน่วย
       var tier = h.match(/(\d+)\s*ชิ้น/);
       if (tier && STOCK_PRICE_TIERS.indexOf(Number(tier[1])) > -1) { colMap[ci] = 'price' + tier[1]; found.push(h); return; }
       for (var k = 0; k < STOCK_CSV_COLUMNS.length; k++) {
@@ -5176,7 +5319,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     var salesOpts = [{ value: '', label: '— เลือกเซลล์ —' }].concat((state.master.sales || []).map(function (x) { return { value: x.id, label: x.name }; }));
     var lines = d.lines.map(function (l, i) {
       return '<div style="display:grid;grid-template-columns:minmax(0,1fr) 100px 40px;gap:8px;align-items:start;margin-bottom:6px">' +
-        '<div><div style="display:grid;grid-template-columns:92px minmax(0,1fr);gap:6px">' +
+        '<div><div style="display:grid;grid-template-columns:fit-content(240px) minmax(0,1fr);gap:6px">' +
           bindSelect('lines.' + i + '.loc', [{ value: 'A', label: stockName('A') }, { value: 'B', label: stockName('B') }]) +
           '<input type="text" id="wdMed' + i + '" data-med-pick="medicine" data-med-loc="' + esc(l.loc || 'A') + '" autocomplete="off" placeholder="เลือกยาจาก ' + esc(stockName(l.loc || 'A')) + '" value="' + esc(l.name) + '" data-bind="lines.' + i + '.name" style="' + inputStyle + '"></div>' +
           '<div id="wdCap' + i + '" style="font-size:11px;color:var(--muted);margin-top:3px;min-height:14px">' + withdrawLineCaption(l) + '</div></div>' +
@@ -5393,7 +5536,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   /* ส่วนต่าง). The PDF is rendered in the browser by html2pdf.js from the  */
   /* same rows, so Thai text comes out exactly as on screen.              */
   /* ================================================================== */
-  var REPORT_TABS = [{ id: 'daily', label: 'รายงานรายวัน' }, { id: 'sales', label: 'รายงานรายเซลล์' }];
+  var REPORT_TABS = [{ id: 'daily', label: 'รายงานรายวัน' }, { id: 'sales', label: 'รายงานรายเซลล์' }, { id: 'ship', label: 'รายงานจัดยารอส่ง' }];
   function reportTab(tab) {
     if (tab === state.report.tab) return;
     state.report.tab = tab; state.report.data = null; state.report.page = 1;
@@ -5405,10 +5548,12 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     rp.salesId = salesEl ? salesEl.value : rp.salesId;
     rp.from = fromEl ? fromEl.value : rp.from;
     rp.to = toEl ? toEl.value : rp.to;
+    var shipStEl = document.getElementById('rpShipStatus');
+    if (shipStEl) rp.shipStatus = shipStEl.value;
     if (rp.from && rp.to && rp.from > rp.to) { toast('error', 'วันที่เริ่มต้นต้องไม่เกินวันที่สิ้นสุด'); return; }
     var tab = rp.tab;
     rp.loading = true; render();
-    call(tab === 'daily' ? 'getDailyReport' : 'getSalesReport', session.token, { salesId: rp.salesId, dateFrom: rp.from, dateTo: rp.to }).then(function (res) {
+    call(tab === 'daily' ? 'getDailyReport' : tab === 'ship' ? 'getShipReport' : 'getSalesReport', session.token, { salesId: rp.salesId, dateFrom: rp.from, dateTo: rp.to, status: tab === 'ship' ? (rp.shipStatus == null ? 'pending' : rp.shipStatus) : '' }).then(function (res) {
       rp.loading = false;
       if (rp.tab !== tab) { render(); return; } // tab switched meanwhile
       rp.data = res.data; rp.dataTab = tab; rp.page = 1; render();
@@ -5424,23 +5569,80 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       '<div style="width:170px">' + lbl('ตั้งแต่วันที่') + '<input type="date" id="rpFrom" value="' + esc(rp.from) + '" style="' + inputStyle + '"></div>' +
       '<div style="width:170px">' + lbl('ถึงวันที่') + '<input type="date" id="rpTo" value="' + esc(rp.to) + '" style="' + inputStyle + '"></div>' +
       '<div style="min-width:200px;flex:1">' + lbl('ชื่อเซลล์') + '<select id="rpSales" style="' + inputStyle + '">' + salesOpts + '</select></div>' +
+      (rp.tab === 'ship' ? '<div style="width:160px">' + lbl('สถานะ') + '<select id="rpShipStatus" style="' + inputStyle + '">' +
+        [['pending', 'รอคิดเงิน'], ['billed', 'คิดเงินแล้ว'], ['', 'ทั้งหมด']].map(function (o) {
+          return '<option value="' + o[0] + '"' + ((rp.shipStatus == null ? 'pending' : rp.shipStatus) === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+        }).join('') + '</select></div>' : '') +
       (rp.tab === 'sales' && isAdmin() ? '<div>' + lbl('รูปแบบรายงาน') + '<div style="display:flex;border:1px solid var(--input-border);border-radius:9px;overflow:hidden">' +
         [['sales', 'Report เซลล์'], ['all', 'Report รวม']].map(function (o) {
           var on = (rp.view || 'all') === o[0];
           return '<button data-action="report-view" data-arg="' + o[0] + '" style="border:none;padding:9px 14px;font:inherit;font-size:13px;cursor:pointer;' + (on ? 'background:var(--accent);color:#fff;font-weight:600' : 'background:var(--surface);color:var(--text-2)') + '">' + o[1] + '</button>';
         }).join('') + '</div></div>' : '') +
       '<button class="btn btn-primary" data-action="run-report"' + (rp.loading ? ' disabled' : '') + '>' + (rp.loading ? '<span class="spin"></span>' : '<span class="ms">assessment</span>') + ' ดูรายงาน</button>' +
-      (D && D.rows.length ? '<button class="btn" data-action="report-pdf"><span class="ms">picture_as_pdf</span> ดาวน์โหลด PDF</button>' : '') +
+      (D && D.rows.length && rp.tab !== 'ship' ? '<button class="btn" data-action="report-pdf"><span class="ms">picture_as_pdf</span> ดาวน์โหลด PDF</button>' : '') +
     '</div>';
     var body;
     if (!D) {
       body = '<div class="card" style="border:1px solid var(--border);border-radius:var(--r)' + (rp.loading ? ';padding:0;overflow:hidden">' + skelBlock(8) : '"><div class="empty-state" style="padding:40px">เลือกช่วงวันที่และชื่อเซลล์ แล้วกด "ดูรายงาน"</div>') + '</div>';
     } else {
-      body = rp.tab === 'daily' ? dailyReportTable(D) : salesReportTable(D);
+      body = rp.tab === 'daily' ? dailyReportTable(D) : rp.tab === 'ship' ? shipReportTable(D) : salesReportTable(D);
     }
     return tabBar(REPORT_TABS, rp.tab, 'report-tab') + filterBar + body;
   }
   var RP_TH = 'padding:10px 12px;white-space:nowrap';
+  /**
+   * รายงานจัดยารอส่ง: จัดยารอส่ง lines (already out of stock) grouped by เซลล์, with ราคาขายของเซลล์ (and ทุน for admin).
+   * Each line, or a เซลล์'s whole รอคิดเงิน group, can be marked คิดเงินแล้ว (and back). Not part of sales or dashboard totals.
+   */
+  function shipReportTable(D) {
+    var admin = isAdmin(), td = 'padding:9px 12px;border-top:1px solid var(--border);white-space:nowrap', R = 'text-align:right';
+    var tile = function (label, val, color) {
+      return '<div class="card" style="border:1px solid var(--border);border-radius:var(--r);padding:12px 16px;flex:1;min-width:150px"><div style="font-size:11.5px;color:var(--muted)">' + esc(label) + '</div>' +
+        '<div style="font-size:18px;font-weight:700;margin-top:4px' + (color ? ';color:' + color : '') + '">' + val + '</div></div>';
+    };
+    var tiles = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">' +
+      tile('จำนวนรายการ', num(D.rows.length)) + tile('รอคิดเงิน', num(D.pendingCount) + ' รายการ', D.pendingCount ? 'var(--amber-dark)' : '') +
+      (admin ? tile('ทุนรวม', money(D.totalCost)) : '') + tile('ยอดขายเซลล์รวม', money(D.totalSale)) + '</div>';
+    if (!D.rows.length) return tiles + '<div class="card" style="border:1px solid var(--border);border-radius:var(--r)"><div class="empty-state" style="padding:40px">ไม่มีรายการจัดยารอส่งในช่วงนี้</div></div>';
+    var cols = 7 + (admin ? 2 : 0);
+    var head = '<thead><tr style="background:var(--hover-bg);font-size:12px;color:var(--text-2);text-align:left">' +
+      '<th style="' + RP_TH + '">วันที่</th><th style="' + RP_TH + '">ลูกค้า</th><th style="' + RP_TH + '">ยา</th><th style="' + RP_TH + ';' + R + '">จำนวน</th>' +
+      (admin ? '<th style="' + RP_TH + ';' + R + '">ทุน/หน่วย</th><th style="' + RP_TH + ';' + R + '">ทุนรวม</th>' : '') +
+      '<th style="' + RP_TH + ';' + R + '">ราคาขาย/หน่วย</th><th style="' + RP_TH + ';' + R + '">ยอดขาย</th><th style="' + RP_TH + '">สถานะ</th></tr></thead>';
+    var keyOf = function (r) { return r.salesId || r.salesName || '-'; };
+    var body = D.bySales.map(function (b) {
+      var k = b.salesId || b.salesName || '-', rows = D.rows.filter(function (r) { return keyOf(r) === k; });
+      var groupHead = '<tr style="background:var(--accent-soft)"><td colspan="' + cols + '" style="padding:9px 12px;border-top:1px solid var(--border)">' +
+        '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><b>' + esc(b.salesName || '-') + '</b>' +
+        '<span style="font-size:12px;color:var(--text-2)">' + num(b.count) + ' รายการ' + (b.pending ? ' · รอคิดเงิน ' + num(b.pending) : '') + (admin ? ' · ทุน ' + money(b.cost) : '') + ' · ขาย ' + money(b.sale) + '</span>' +
+        (b.pending ? '<button class="btn" data-action="ship-status-group" data-arg="' + esc(k) + '" style="margin-left:auto;padding:6px 12px;font-size:12.5px"><span class="ms">done_all</span> คิดเงินแล้วทั้งหมด (' + num(b.pending) + ')</button>' : '') +
+        '</div></td></tr>';
+      return groupHead + rows.map(function (r) {
+        var billed = r.status === 'billed';
+        return '<tr style="font-size:13px">' +
+          '<td style="' + td + '">' + esc(r.date) + '</td><td style="' + td + '">' + esc(r.patientName) + '</td>' +
+          '<td style="' + td + ';white-space:normal">' + esc(r.itemName) + (r.loc ? ' <span style="color:var(--muted);font-size:11.5px">[' + esc(stockName(r.loc)) + ']</span>' : '') + '</td>' +
+          '<td style="' + td + ';' + R + '">' + num(r.qty) + (r.unit ? ' ' + esc(r.unit) : '') + '</td>' +
+          (admin ? '<td style="' + td + ';' + R + '">' + money(r.unitCost) + '</td><td style="' + td + ';' + R + '">' + money(r.costAmount) + '</td>' : '') +
+          '<td style="' + td + ';' + R + '">' + (r.salePrice == null ? '<span style="color:var(--muted)">—</span>' : money(r.salePrice)) + '</td>' +
+          '<td style="' + td + ';' + R + ';font-weight:600">' + (r.saleAmount == null ? '<span style="color:var(--muted)">—</span>' : money(r.saleAmount)) + '</td>' +
+          '<td style="' + td + '"><div style="display:flex;align-items:center;gap:8px">' +
+            '<span class="tag-badge" style="background:' + (billed ? 'var(--green-soft,var(--hover-bg));color:var(--green-dark)' : 'var(--amber-soft);color:var(--amber-dark)') + '">' + (billed ? 'คิดเงินแล้ว' : 'รอคิดเงิน') + '</span>' +
+            '<button class="btn" data-action="ship-status" data-arg="' + esc(r.rid + '|' + r.lineId + '|' + (billed ? 'pending' : 'billed')) + '" title="' + (billed ? (r.billedAt ? 'คิดเงินเมื่อ ' + esc(r.billedAt) + (r.billedBy ? ' โดย ' + esc(r.billedBy) : '') + ' — ' : '') + 'ย้อนกลับเป็นรอคิดเงิน' : 'ทำเครื่องหมายคิดเงินแล้ว') + '" style="padding:5px 10px;font-size:12px">' +
+              (billed ? '<span class="ms" style="font-size:15px">undo</span>' : '<span class="ms" style="font-size:15px">check</span> คิดเงินแล้ว') + '</button>' +
+          '</div></td></tr>';
+      }).join('');
+    }).join('');
+    return tiles + '<div class="card" style="border:1px solid var(--border);border-radius:var(--r);overflow-x:auto' + (state.report.loading ? ';opacity:.6' : '') + '"><table style="width:100%;border-collapse:collapse">' + head + '<tbody>' + body + '</tbody></table></div>';
+  }
+  /** lines [{rid, lineId}] -> status ('billed' | 'pending'), then reloads the report. */
+  function setShipLinesStatus(lines, status) {
+    if (!lines.length) return;
+    call('setShipStatus', session.token, lines, status).then(function (res) {
+      toast('success', (status === 'billed' ? 'บันทึกคิดเงินแล้ว ' : 'ย้อนกลับเป็นรอคิดเงิน ') + num(res.data.changed) + ' รายการ');
+      runReport();
+    });
+  }
   /** รายงานรายวัน as a pivot: one block per day, the day's เซลล์ each once, their customers' records under them. */
   function dailyPivotDays(rows) {
     var sorted = rows.map(function (r, i) { return { r: r, i: i }; }).sort(function (x, y) {
@@ -5911,21 +6113,21 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       : '<span class="tag-badge" style="background:var(--border-soft);color:var(--text-2);white-space:nowrap">ซื้ออื่นๆ / เวชภัณฑ์</span>';
   }
   /** Stock items a PO line of this type can be: ยา for ซื้อยาจากเซลล์, everything else (เวชภัณฑ์...) for ซื้ออื่นๆ. */
-  /** Stock a PO line adds to: 'supply' (เวชภัณฑ์) or ยา 'A' / 'B'; ซื้อยาจากเซลล์ only has the ยา stocks. */
+  /** Stock a PO line adds to: 'supply' (เวชภัณฑ์), ยา 'A' / 'B' or 'oral' (ยาทาน); ซื้อยาจากเซลล์ only has the ยา stocks. */
   function orderStockOptions(type) {
     var o = [{ value: 'A', label: stockName('A') }, { value: 'B', label: stockName('B') }];
-    return type === 'sales' ? o : [{ value: 'supply', label: 'เวชภัณฑ์' }].concat(o);
+    return type === 'sales' ? o : [{ value: 'supply', label: 'เวชภัณฑ์' }].concat(o, [{ value: 'oral', label: 'ยาทาน' }]);
   }
   function orderDefaultStock(type) { return type === 'sales' ? 'A' : 'supply'; }
   /** The line's Stock from its linked item (an edited PO), else the PO type's default. */
   function orderLineStock(type, l) {
     var it = l.itemId ? (state.suggestCache.stock || []).filter(function (x) { return x.id === l.itemId; })[0] : null;
-    if (it) return it.type === 'medicine' ? (it.loc || 'A') : 'supply';
+    if (it) return stockKeyOfItem(it);
     return orderDefaultStock(type);
   }
   function orderEligibleStock(type, stock) {
     stock = stock || orderDefaultStock(type);
-    return stock === 'supply' ? stockItemsOfType('supply') : stockItemsOfType('medicine', stock);
+    return stock === 'supply' || stock === 'oral' ? stockItemsOfType(stock) : stockItemsOfType('medicine', stock);
   }
   function orderItemByText(type, text, stock) {
     var all = orderEligibleStock(type, stock), t = String(text || '').trim();
@@ -6075,7 +6277,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         '<div class="supply-row" style="margin-bottom:2px">' +
           '<div style="width:' + OC_W + ';flex:none">' + catSelectHtml('lines.' + i + '.category', catOpts) + '</div>' +
           '<div style="width:' + OS_W + ';flex:none">' + bindSelect('lines.' + i + '.stock', orderStockOptions(d.type)) + '</div>' +
-          '<input type="text" list="dlOrderStock' + i + '" autocomplete="off" placeholder="ชื่อสินค้า (เลือกจาก ' + esc(l.stock === 'supply' ? 'เวชภัณฑ์' : stockName(l.stock)) + ')" value="' + esc(l.itemName) + '" data-bind="lines.' + i + '.itemName" style="' + inputStyle + '" class="g">' +
+          '<input type="text" list="dlOrderStock' + i + '" autocomplete="off" placeholder="ชื่อสินค้า (เลือกจาก ' + esc(stockSumLabel(l.stock)) + ')" value="' + esc(l.itemName) + '" data-bind="lines.' + i + '.itemName" style="' + inputStyle + '" class="g">' +
           '<input type="number" min="0" value="' + esc(l.qty) + '" data-bind="lines.' + i + '.qty" style="' + inputStyle + ';width:' + OQ_W + ';flex:none" placeholder="จำนวน">' +
           '<input type="number" min="0" value="' + esc(l.unitPrice) + '" data-bind="lines.' + i + '.unitPrice" style="' + inputStyle + ';width:' + OP_W + ';flex:none" placeholder="ราคา/หน่วย">' +
           '<div id="orderLineAmt' + i + '" style="width:' + OA_W + ';flex:none;text-align:right;font-weight:600;font-size:13px">' + money(orderLineAmount(l)) + '</div>' +
@@ -6105,9 +6307,9 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   /** Under each PO line: which stock item it will add to, or that it isn't linked to stock. */
   function orderLineCaption(l) {
     var s = l.itemId ? (state.suggestCache.stock || []).filter(function (x) { return x.id === l.itemId; })[0] : null;
-    if (s) return '<span style="color:var(--green-dark)"><span class="ms" style="font-size:13px;vertical-align:middle">add_circle</span> เพิ่มเข้า ' + esc(s.type === 'medicine' ? stockName(s.loc || 'A') : 'สต๊อกเวชภัณฑ์') + 'เมื่อตรวจรับ' + (s.unit ? ' (' + esc(s.unit) + ')' : '') + '</span>';
+    if (s) return '<span style="color:var(--green-dark)"><span class="ms" style="font-size:13px;vertical-align:middle">add_circle</span> เพิ่มเข้า ' + esc(stockKeyName(stockKeyOfItem(s))) + 'เมื่อตรวจรับ' + (s.unit ? ' (' + esc(s.unit) + ')' : '') + '</span>';
     if (String(l.itemName || '').trim() && state.draft && state.draft.type === 'sales') return '<span style="color:var(--red-dark)">ซื้อยาจากเซลล์ต้องเลือกยาจากสต๊อกยา</span>';
-    return String(l.itemName || '').trim() ? '<span style="color:var(--muted)">ไม่พบใน ' + esc(l.stock === 'supply' ? 'สต๊อกเวชภัณฑ์' : stockName(l.stock || 'A')) + ' — ไม่เพิ่มจำนวนสต๊อก</span>' : '';
+    return String(l.itemName || '').trim() ? '<span style="color:var(--muted)">ไม่พบใน ' + esc(stockKeyName(l.stock)) + ' — ไม่เพิ่มจำนวนสต๊อก</span>' : '';
   }
   function saveOrderModal() {
     if (!state.draft.lines.length) { toast('error', 'กรุณาเพิ่มรายการสินค้าอย่างน้อย 1 รายการ'); return; }
@@ -6140,7 +6342,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   }
   var onPurchaseCheckSearch = debounce(function (q) { state.pcheck.q = q; state.pcheck.page = 1; loadPurchaseChecks(); }, 300);
   /** The stock a PO line goes into, by name (สต๊อกเวชภัณฑ์ / the ยา stock's own name). */
-  function pcheckStockLabel(l) { return l.stock === 'supply' ? 'สต๊อกเวชภัณฑ์' : stockName(l.stock || 'A'); }
+  function pcheckStockLabel(l) { return stockKeyName(l.stock); }
   function purchaseCheckTemplate() {
     var p = state.pcheck, L = p.list, pending = p.tab === 'pending';
     var th = 'padding:10px 12px;white-space:nowrap';
@@ -6894,6 +7096,10 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   var statusFilterOptions = function () { return [{ value: '', label: 'สถานะการรักษาทั้งหมด' }].concat(['dispensed'].concat(VISIT_FLOW).map(function (v) { return { value: v, label: VISIT_STATUS_LABEL[v] }; })); };
   var stockCatFilterOptions = function () { return [{ value: '', label: 'หมวดหมู่ทั้งหมด' }].concat((state.master.stockCategories || []).map(function (c) { return { value: c.name, label: c.name }; })); };
 
+  // Where the last press started: a backdrop (…-bg) closes its modal / side panel only when the click both
+  // started and ended on it — selecting text in a field and letting go outside must not close it.
+  var pressTarget = null;
+  document.addEventListener('pointerdown', function (ev) { pressTarget = ev.target; }, true);
   document.addEventListener('click', function (ev) {
     // Portal option pick
     var portalOpt = ev.target.closest('[data-portal-pick]');
@@ -6931,6 +7137,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     var action = el.getAttribute('data-action');
     var arg = el.getAttribute('data-arg');
     var idx = el.getAttribute('data-idx');
+    if (/-bg$/.test(action) && pressTarget && pressTarget !== el) return; // press began inside the modal/panel (see pressTarget)
 
     // Still saving / deleting from this button: ignore the click (see busyKeys).
     var clickBusyKey = action + '|' + (arg || '');
@@ -7052,6 +7259,8 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       case 'remove-promo-row': removePromoRow(Number(arg)); break;
       case 'add-line-row': addLineRow(arg); break;
       case 'remove-line-row': removeLineRow(arg); break;
+      case 'line-pick-stock': setLineOther(arg, false); break;
+      case 'msgin-keep': (function () { var mk = String(arg).split(':'), mkLine = state.draft && state.draft.msgInItems[Number(mk[0])]; if (mkLine) { mkLine.keep = mk[1]; patchMsgInLeft(Number(mk[0])); } })(); break;
       case 'add-supply-row': addSupplyRow(); break;
       case 'remove-supply-row': removeSupplyRow(Number(arg)); break;
       case 'add-medicine-row': addMedicineRow(); break;
@@ -7121,6 +7330,13 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       case 'report-view': state.report.view = arg === 'sales' ? 'sales' : 'all'; render(); break;
       case 'report-group-toggle': state.report.groupCollapsed = !state.report.groupCollapsed; render(); break;
       case 'run-report': runReport(); break;
+      case 'ship-status': (function () { var sp = String(arg).split('|'); setShipLinesStatus([{ rid: sp[0], lineId: sp[1] }], sp[2]); })(); break;
+      case 'ship-status-group': (function () {
+        var D = state.report.data, pend = (D && D.rows || []).filter(function (r) { return (r.salesId || r.salesName || '-') === arg && r.status === 'pending'; });
+        Swal.fire({ title: 'คิดเงินแล้วทั้งหมด?', text: 'ทำเครื่องหมายคิดเงินแล้ว ' + pend.length + ' รายการ', showCancelButton: true, confirmButtonText: 'ยืนยัน', cancelButtonText: 'ยกเลิก' }).then(function (r) {
+          if (r.isConfirmed) setShipLinesStatus(pend.map(function (x) { return { rid: x.rid, lineId: x.lineId }; }), 'billed');
+        });
+      })(); break;
       case 'report-pdf': openReportPdfPreview(null); break;
       case 'report-pdf-download': downloadReportPdf(); break;
       case 'edit-deposit': editDepositModal(arg); break;
@@ -7308,6 +7524,39 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       render(); updateRecordPreview();
       return;
     }
+    // จัดยารอส่ง / messenger / ยาทาน lines: Stock A/B change clears the ยา; a picked name links itemId (patched in place).
+    var lineLoc = bindPath.match(/^(shipItems|msgInItems)\.(\d+)\.loc$/);
+    if (lineLoc) { var llLine = state.draft[lineLoc[1]][Number(lineLoc[2])]; llLine.itemId = ''; llLine.name = ''; if (lineLoc[1] === 'msgInItems') llLine.keep = 'return'; render(); return; }
+    var linePick = bindPath.match(/^(shipItems|msgInItems|oralItems)\.(\d+)\.name$/);
+    if (linePick) {
+      var lpIdx = Number(linePick[2]), lp = state.draft[linePick[1]][lpIdx];
+      if (!lp || lp.other) return;
+      var lpText = String(val).trim();
+      var lpItem = linePick[1] === 'oralItems' ? stockItemByPickText('oral', lpText)
+        : (stockItemsOfType('medicine', lp.loc || 'A').filter(function (x) { return x.name === lpText; })[0] || null);
+      lp.itemId = lpItem ? lpItem.id : '';
+      el.style.borderColor = lp.itemId || !lpText ? '' : 'var(--red-dark)';
+      if (linePick[1] === 'msgInItems') { if (!lp.itemId) lp.keep = 'return'; patchMsgInLeft(lpIdx); }
+      if (linePick[1] === 'oralItems') {
+        if (lpItem && !lp._priceTyped) {
+          var p0 = (lpItem.prices || [])[0];
+          lp.unitPrice = p0 == null ? '' : p0;
+          var lpPrice = document.querySelector('[data-bind="oralItems.' + lpIdx + '.unitPrice"]');
+          if (lpPrice) lpPrice.value = lp.unitPrice;
+        }
+        recalcOralLine(lp); patchOralRow(lpIdx);
+      }
+      return;
+    }
+    var msgQty = bindPath.match(/^msgInItems\.(\d+)\.(qtyIn|qtyUsed)$/);
+    if (msgQty) { patchMsgInLeft(Number(msgQty[1])); return; }
+    var oralNum = bindPath.match(/^oralItems\.(\d+)\.(qty|unitPrice)$/);
+    if (oralNum) {
+      var oLn = state.draft.oralItems[Number(oralNum[1])];
+      if (oralNum[2] === 'unitPrice') oLn._priceTyped = el.value !== '';
+      recalcOralLine(oLn); patchOralRow(Number(oralNum[1]));
+      return;
+    }
     var stockPick = bindPath.match(STOCK_NAME_PICK_RE);
     if (stockPick && stockPick[1] === 'medicineItems' && (state.draft.medicineItems[Number(stockPick[2])] || {}).other) return; // ยาอื่นๆ: free text
     if (stockPick) {
@@ -7413,9 +7662,13 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         else if (bindPath === 'useOwnMed' && !state.draft.ownMedItems.length) state.draft.ownMedItems.push(NEW_LINE.ownMedItems());
         else if (bindPath === 'useDepositUse' && !state.draft.depositUseItems.length) state.draft.depositUseItems.push(NEW_LINE.depositUseItems());
         else if (bindPath === 'useMessenger' && !state.draft.messengerItems.length) state.draft.messengerItems.push(NEW_LINE.messengerItems());
+        else if (bindPath === 'useShip' && !state.draft.shipItems.length) state.draft.shipItems.push(NEW_LINE.shipItems());
+        else if (bindPath === 'useMsgIn' && !state.draft.msgInItems.length) state.draft.msgInItems.push(NEW_LINE.msgInItems());
+        else if (bindPath === 'useOral' && !state.draft.oralItems.length) state.draft.oralItems.push(NEW_LINE.oralItems());
         else if (bindPath === 'useOther' && !state.draft.otherItems.length) state.draft.otherItems.push({ label: '', amount: 0 });
       }
       render();
+      if (bindPath === 'useOral') updateRecordPreview();
       return;
     }
     if (isLivePreviewBindPath(bindPath)) updateRecordPreview();
