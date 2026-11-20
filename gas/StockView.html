@@ -65,21 +65,21 @@ body{margin:0;font-family:'Noto Sans Thai',system-ui,sans-serif;color:var(--text
     <button class="tile out" data-f="out"><div class="l">หมดแล้ว</div><div class="v" id="tOut"></div></button>
   </div>
   <div class="sticky">
-    <div class="search"><span class="ms" style="color:var(--muted)">search</span><input id="q" placeholder="ค้นหาชื่อยา / เวชภัณฑ์" autocomplete="off" value="<?= q ?>"><button class="clear" id="clear" aria-label="ล้างคำค้น"><span class="ms">close</span></button></div>
+    <div class="search"><span class="ms" style="color:var(--muted)">search</span><input id="q" placeholder="ค้นหาชื่อยา / ยาทาน / เวชภัณฑ์" autocomplete="off" value="<?= q ?>"><button class="clear" id="clear" aria-label="ล้างคำค้น"><span class="ms">close</span></button></div>
     <div class="chips" id="chips"></div>
   </div>
   <div class="meta"><span id="count"></span><span>เรียง: หมด / ใกล้หมดก่อน</span></div>
   <div class="list" id="list"></div>
   <script>
   var ITEMS = <?!= itemsJson ?>;
-  var T = <?!= labelsJson ?>; // {A, B, supply}: the stock names set in ตั้งค่าคลินิก
+  var T = <?!= labelsJson ?>; // {A, B, oral, supply}: the stock names set in ตั้งค่าคลินิก (+ ยาทาน, เวชภัณฑ์)
   var st = { q: document.getElementById('q').value || '', t: '', f: 'all', n: 40 };
   function esc(x) { return String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
   function fmt(n) { return (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('en-US'); }
   function state(x) { return x.qty <= 0 ? 'out' : (x.min != null && x.qty < x.min ? 'warn' : 'ok'); }
   var ORDER = { out: 0, warn: 1, ok: 2 };
   document.getElementById('chips').innerHTML = '<button class="chip on" data-t="">ทั้งหมด</button>' +
-    ['A', 'B', 'supply'].map(function (k) { return '<button class="chip" data-t="' + k + '">' + esc(T[k]) + '</button>'; }).join('');
+    ['A', 'B', 'oral', 'supply'].map(function (k) { return '<button class="chip" data-t="' + k + '">' + esc(T[k]) + '</button>'; }).join('');
   function render() {
     var q = st.q.trim().toLowerCase();
     var base = ITEMS.filter(function (x) { return !st.t || x.type === st.t; });
