@@ -6126,18 +6126,31 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       '<td style="text-align:right">' + money(D.totalSale) + '</td>' +
       grp('<td></td>', '<td style="text-align:right">' + money(D.totalCustomer || 0) + '</td>', marginCell(D.totalMargin, true)) +
       refundCell(D.totalRefund || 0, true) + '<td></td></tr>';
-    // สรุปรายเซลล์ — shown when the report covers more than one.
+    // สรุปรายเซลล์ (when the report covers more than one) and สรุปรายคลัง: same columns, one line per เซลล์ / คลัง.
+    var summaryCard = function (title, firstCol, list) {
+      return '<div class="card" style="border:1px solid var(--border);border-radius:var(--r);padding:12px 16px;margin-top:12px"><div style="font-size:12.5px;font-weight:700;margin-bottom:6px">' + esc(title) + '</div>' +
+        '<div style="display:grid;grid-template-columns:minmax(0,1fr)' + (sc ? ' 120px' : '') + ' 120px' + (shown ? ' 120px' : '') + ' 120px;gap:3px 12px;font-size:13px">' +
+        '<span style="color:var(--muted);font-size:11.5px">' + esc(firstCol) + '</span>' + (sc ? '<span style="color:var(--muted);font-size:11.5px;text-align:right">ทุน</span>' : '') + '<span style="color:var(--muted);font-size:11.5px;text-align:right">ราคาขายเซลล์</span>' +
+        (shown ? '<span style="color:var(--muted);font-size:11.5px;text-align:right">ส่วนต่างสุทธิ</span>' : '') + '<span style="color:var(--muted);font-size:11.5px;text-align:right">ส่วนต่างคืนเซลล์</span>' +
+        list.map(function (b) {
+          return '<span>' + esc(b.name) + '</span>' + (sc ? '<b style="text-align:right">' + money(b.cost) + '</b>' : '') + '<b style="text-align:right">' + money(b.sale) + '</b>' +
+            (shown ? '<b style="text-align:right;color:' + (b.margin < 0 ? 'var(--red-dark)' : 'var(--green-dark)') + '">' + money(b.margin) + '</b>' : '') +
+            '<b style="text-align:right;color:var(--red-dark)">' + money(b.refund || 0) + '</b>';
+        }).join('') + '</div></div>';
+    };
     var perSales = (D.bySales || []).length > 1
-      ? '<div class="card" style="border:1px solid var(--border);border-radius:var(--r);padding:12px 16px;margin-top:12px"><div style="font-size:12.5px;font-weight:700;margin-bottom:6px">สรุปรายเซลล์</div>' +
-          '<div style="display:grid;grid-template-columns:minmax(0,1fr)' + (sc ? ' 120px' : '') + ' 120px' + (shown ? ' 120px' : '') + ' 120px;gap:3px 12px;font-size:13px">' +
-          '<span style="color:var(--muted);font-size:11.5px">เซลล์</span>' + (sc ? '<span style="color:var(--muted);font-size:11.5px;text-align:right">ทุน</span>' : '') + '<span style="color:var(--muted);font-size:11.5px;text-align:right">ราคาขายเซลล์</span>' +
-          (shown ? '<span style="color:var(--muted);font-size:11.5px;text-align:right">ส่วนต่างสุทธิ</span>' : '') + '<span style="color:var(--muted);font-size:11.5px;text-align:right">ส่วนต่างคืนเซลล์</span>' +
-          D.bySales.map(function (b) {
-            return '<span>' + esc(b.salesName) + '</span>' + (sc ? '<b style="text-align:right">' + money(b.cost) + '</b>' : '') + '<b style="text-align:right">' + money(b.sale) + '</b>' +
-              (shown ? '<b style="text-align:right;color:' + (b.margin < 0 ? 'var(--red-dark)' : 'var(--green-dark)') + '">' + money(b.margin) + '</b>' : '') +
-              '<b style="text-align:right;color:var(--red-dark)">' + money(b.refund || 0) + '</b>';
-          }).join('') + '</div></div>'
-      : '';
+      ? summaryCard('สรุปรายเซลล์', 'เซลล์', D.bySales.map(function (b) { return Object.assign({ name: b.salesName }, b); })) : '';
+    // สรุปรายคลัง: the same sums per คลัง (Stock A / B by its name; "-" for a line not from either).
+    var byStock = [], stockIdx = {}, r2 = function (v) { return Math.round(v * 100) / 100; };
+    D.rows.forEach(function (r) {
+      var k = stockNameParts(r.itemId, r.itemName).stock, b = stockIdx[k];
+      if (!b) { b = stockIdx[k] = { name: k, cost: 0, sale: 0, margin: 0, refund: 0 }; byStock.push(b); }
+      b.cost = r2(b.cost + (Number(r.costAmount) || 0)); b.sale = r2(b.sale + (Number(r.saleAmount) || 0));
+      b.margin = r2(b.margin + (Number(r.margin) || 0));
+      if (r.customerAmount != null) b.refund = r2(b.refund + (Number(r.refund) || 0));
+    });
+    byStock.sort(function (a, b) { return a.name === '-' ? 1 : b.name === '-' ? -1 : a.name.localeCompare(b.name, 'th'); });
+    var perStock = byStock.length ? summaryCard('สรุปรายคลัง', 'คลัง', byStock) : '';
     // Frozen header: the table scrolls inside its own box, so the header rows stay on top (two rows while the group is open).
     var H1 = 42;
     var th = function (txt, extra, top) { return '<th style="' + RP_TH + ';position:sticky;top:' + (top || 0) + 'px;z-index:2;background:var(--hover-bg);box-shadow:inset 0 -1px 0 var(--border);' + (extra || '') + '">' + txt + '</th>'; };
@@ -6154,7 +6167,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       (open ? '<tr>' + th('ราคาลูกค้าจ่าย/หน่วย<div style="font-weight:400;font-size:10.5px">(ซื้อยาเพิ่มหน้าคลินิก)</div>', 'text-align:right;background:#F7EAEC', H1) +
         th('จำนวนเงินรวม', 'text-align:right;background:#F7EAEC', H1) + th('ส่วนต่างสุทธิ', 'text-align:right;background:#F7EAEC', H1) + '</tr>' : '') + '</thead>';
     return listCardWrap('<div style="overflow:auto;max-height:calc(100vh - 230px)"><table class="table stock-table vmid" style="width:100%;border-collapse:collapse">' +
-      head + '<tbody>' + rows + foot + '</tbody></table></div>', state.report.loading) + localPagerHtml(pg, 'report') + perSales +
+      head + '<tbody>' + rows + foot + '</tbody></table></div>', state.report.loading) + localPagerHtml(pg, 'report') + perSales + perStock +
       (sc ? '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">ยาจากจัดยา-เบิกยาทุกรายการ (ลูกค้าจ่ายค่ายาให้เซลล์ คลินิกเก็บราคาทุนจากเซลล์) และรายการซื้อยาเพิ่มใน OPD (คลินิกเก็บเงินลูกค้าเอง · ระบุในหมายเหตุ) · ราคาทุน ณ วันที่เบิก · ราคาขายตามเซลล์: Sale Agent → Sale group → Standard · ส่วนต่างสุทธิ = ราคาขายเซลล์ − ทุน · ส่วนต่างคืนเซลล์ = ราคาลูกค้าจ่าย − ราคาขายเซลล์ · Report เซลล์ ซ่อนข้อมูลภายในคลินิก (ใช้พิมพ์ให้เซลล์) · คลิกที่แถวเพื่อดูตัวอย่างและดาวน์โหลด PDF ของเซลล์/วันนั้น</div>'
         : '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">ยาจากจัดยา-เบิกยาและรายการซื้อยาเพิ่มใน OPD · ราคาขายตามเซลล์: Sale Agent → Sale group → Standard · ส่วนต่างคืนเซลล์ = ราคาลูกค้าจ่าย − ราคาขายเซลล์ · คลิกที่แถวเพื่อดูตัวอย่างและดาวน์โหลด PDF ของเซลล์/วันนั้น</div>');
   }
