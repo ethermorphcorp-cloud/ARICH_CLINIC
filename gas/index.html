@@ -3441,9 +3441,10 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
    * server-trusted Promotions snapshot can't be known/verified client-side).
    */
   /* ---- Canula (เข็มทู่): lines {name (หมายเหตุ), qty, unitPrice, amount}; ราคา/หน่วย starts from ตั้งค่า > ราคา Canula ---- */
+  var CANULA_DEFAULT_PRICE = 500; // used until ตั้งค่า > ราคา Canula is set
   function canulaDefaultPrice() {
     var p = state.master && state.master.clinicInfo && state.master.clinicInfo.canulaUnitPrice;
-    return p === undefined || p === null || p === '' || isNaN(Number(p)) ? '' : Number(p);
+    return p === undefined || p === null || p === '' || isNaN(Number(p)) ? CANULA_DEFAULT_PRICE : Number(p);
   }
   function newCanulaLine() { var l = { name: '', qty: 1, unitPrice: canulaDefaultPrice(), amount: 0 }; recalcCanulaLine(l); return l; }
   /** จำนวนเงิน = จำนวน × ราคา/หน่วย; an older line without a ราคา/หน่วย keeps its own amount. */
@@ -7104,7 +7105,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       '<div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6">ราคาต่อหน่วยที่ใส่ให้อัตโนมัติเมื่อเพิ่มรายการ Canula ในบันทึกการรักษา (แก้ไขรายครั้งได้)</div>' +
       '<div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap"><div style="flex:1;min-width:160px">' +
         '<label style="font-size:12px;color:var(--text-2);display:block;margin-bottom:4px">ราคาต่อหน่วย (บาท)</label>' +
-        '<input type="number" min="0" step="any" id="canulaUnitPriceInput" value="' + esc(c.canulaUnitPrice == null ? '' : c.canulaUnitPrice) + '" placeholder="เช่น 300" style="' + inputStyle + '"></div>' +
+        '<input type="number" min="0" step="any" id="canulaUnitPriceInput" value="' + esc(c.canulaUnitPrice == null || c.canulaUnitPrice === '' ? CANULA_DEFAULT_PRICE : c.canulaUnitPrice) + '" placeholder="เช่น 500" style="' + inputStyle + '"></div>' +
         '<button class="btn btn-primary" data-action="save-canula-price"><span class="ms">save</span> บันทึกราคา</button></div>' +
     '</div>' : '') +
     (isAdmin() ? '<div class="card" style="border:1px solid var(--border);border-radius:var(--r);padding:18px;max-width:520px;margin-top:16px">' +
