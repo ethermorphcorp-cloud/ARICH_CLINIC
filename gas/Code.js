@@ -163,7 +163,9 @@ var CONFIG = {
     PROCEDURES: 'Procedures',
     SALE_GROUPS: 'SaleGroups',
     PRICE_OVERRIDES: 'PriceOverrides',
-    AUDIT_LOG: 'AuditLog'
+    AUDIT_LOG: 'AuditLog',
+    DAILY_SUMMARY: 'DailySummary',
+    BACKUPS: 'Backups'
   },
   HEADERS: {
     // NOTE ON SCHEMA CHANGES: new columns are always appended at the END of
@@ -345,7 +347,12 @@ var CONFIG = {
     Staff: ['StaffID', 'Name', 'Role', 'Username', 'PasswordHash', 'PasswordSalt', 'LineID', 'Level', 'Active', 'CreatedAt', 'LineNotify'],
     ClinicSettings: ['Key', 'Value'],
     Counters: ['Key', 'LastSeq'],
-    AuditLog: ['Timestamp', 'User', 'Action', 'Entity', 'EntityID', 'Detail']
+    AuditLog: ['Timestamp', 'User', 'Action', 'Entity', 'EntityID', 'Detail'],
+    // DailySummary — what the dashboard still needs from data that was moved to a backup file (see backupData): one row per
+    // day + Metric (+ Key: doctor / sales / promotion name, expense category, patient id). Amount in baht.
+    DailySummary: ['Date', 'Metric', 'Key', 'Amount', 'Count', 'BackupID'],
+    // Backups — one row per backup file: where it is and what it holds. Status 'เสร็จสิ้น' once the main sheets were cleaned.
+    Backups: ['BackupID', 'CreatedAt', 'CreatedBy', 'FromDate', 'ToDate', 'CutoffDate', 'FileName', 'SpreadsheetID', 'SpreadsheetUrl', 'FolderID', 'CountsJSON', 'Status']
   },
   // Columns that must be stored/read as literal text so leading zeros
   // (phone numbers, ID codes) are never lost to number coercion.
@@ -364,7 +371,8 @@ var CONFIG = {
     StockLog: ['QtyIn', 'QtyRemaining', 'QtyOut'],
     MedDeposits: ['QtyRemaining', 'QtyDeposited'],
     MedWithdrawals: ['Qty', 'UnitCost', 'Amount', 'UnitPrice', 'SaleAmount'],
-    Procedures: ['Price']
+    Procedures: ['Price'],
+    DailySummary: ['Amount', 'Count']
   },
   // ARICH: the Drive folder that holds the database spreadsheet and the
   // Photos / Receipts / OPD Photos folders (setupProject never creates its own root).
@@ -4814,9 +4822,9 @@ function getDailyReport(token, opts) {
  * The รายงานรายเซลล์ lines — what the clinic collects from the sales people:
  * every จัดยา-เบิกยา line and every ยาเบิกเพิ่ม of a บันทึกการรักษา, valued at
  * ราคาทุน on the day. keep(date, salesId) picks the lines. Also feeds the
- * dashboard's รายได้จากเซลล์.
+ * dashboard's รายได้จากเซลล์. src {withdrawals, records}: use these rows instead of the sheets (backup).
  */
-function salesReportRows_(keep) {
+function salesReportRows_(keep, src) {
     var stockById = {}, salesById = {}, ovrByItem = null;
     getRows_(getSheet_(CONFIG.SHEETS.STOCK)).forEach(function (s) { stockById[s.ItemID] = s; });
     var out = [];
@@ -4844,7 +4852,7 @@ function salesReportRows_(keep) {
       o.clinicAmount = o.customerAmount == null ? o.saleAmount : o.customerAmount;
       out.push(o);
     };
-    getRows_(getSheet_(CONFIG.SHEETS.MED_WITHDRAWALS)).forEach(function (w) {
+    ((src && src.withdrawals) || getRows_(getSheet_(CONFIG.SHEETS.MED_WITHDRAWALS))).forEach(function (w) {
       var d = dateStr_(w.Date);
       if (!keep(d, w.SalesID)) return;
       push({
@@ -4854,7 +4862,7 @@ function salesReportRows_(keep) {
         remark: '', clinicCharged: false
       });
     });
-    getRows_(getSheet_(CONFIG.SHEETS.RECORDS)).forEach(function (r) {
+    ((src && src.records) || getRows_(getSheet_(CONFIG.SHEETS.RECORDS))).forEach(function (r) {
       var d = dateStr_(r.Date);
       if (r.Status === 'cancelled' || !isTrue_(r.UseMedicine) || !keep(d, r.SalesID)) return;
       parseLineItems_(r.MedicineJSON).forEach(function (l) {
@@ -5442,6 +5450,9 @@ function getDashboardData(token, opts) {
     // ใบสั่งซื้อ: only ซื้ออื่นๆ / เวชภัณฑ์ทั่วไป are ค่าใช้จ่ายคลินิก; ซื้อยาจากเซลล์ goes to Stock only (its cost is ค่าต้นทุนยา).
     var allOrders = getRows_(getSheet_(CONFIG.SHEETS.ORDERS)).filter(function (o) { return orderTypeOf_(o) !== 'sales' && orderStatusOf_(o) === 'received'; }); // a PO waiting to be checked is not spent yet
     var periodOrders = allOrders.filter(function (r) { var d = dateStr_(r.Date); return d >= dateFrom && d <= dateTo; });
+    // Days moved to a backup file still count, from the DailySummary sheet (see backupData).
+    var archiveRows = getRows_(getSheet_(CONFIG.SHEETS.DAILY_SUMMARY));
+    var arch = archiveSummary_(dateFrom, dateTo, archiveRows), A = function (metric) { return archM_(arch, metric); };
 
     // True total money collected per record (recordCollected_) ties out
     // exactly with clinic + sales + doctor shares (recordClinicShare_).
@@ -5456,21 +5467,21 @@ function getDashboardData(token, opts) {
     // กำไรสุทธิ = รายได้รวม − ค่าใช้จ่ายรวม.
     var medRows = salesReportRows_(function () { return true; });
     var periodMedRows = medRows.filter(function (o) { return o.date >= dateFrom && o.date <= dateTo; });
-    var customerRevenue = periodRecords.reduce(function (s, r) { return s + recordTotalCollected_(r); }, 0);
-    var medicinePurchased = periodRecords.reduce(function (s, r) { return s + (Number(r.MedicineAmount) || 0); }, 0);
+    var customerRevenue = periodRecords.reduce(function (s, r) { return s + recordTotalCollected_(r); }, 0) + A('customerRevenue');
+    var medicinePurchased = periodRecords.reduce(function (s, r) { return s + (Number(r.MedicineAmount) || 0); }, 0) + A('medicinePurchased');
     var clinicRevenue = round2_(customerRevenue - medicinePurchased);
-    var medRevenue = round2_(periodMedRows.reduce(function (s, o) { return s + o.clinicAmount; }, 0));
+    var medRevenue = round2_(periodMedRows.reduce(function (s, o) { return s + o.clinicAmount; }, 0) + A('medRevenue'));
     // ยาทาน: sold at the clinic (part of รายได้คลินิก, in ยอดรับชำระ); its ราคาทุน is ค่าต้นทุนยา.
-    var oralRevenue = round2_(periodRecords.reduce(function (s, r) { return s + (Number(r.OralAmount) || 0); }, 0));
-    var oralCost = round2_(periodRecords.reduce(function (s, r) { return s + (Number(r.OralCost) || 0); }, 0));
-    var medCost = round2_(periodMedRows.reduce(function (s, o) { return s + o.costAmount; }, 0) + oralCost);
+    var oralRevenue = round2_(periodRecords.reduce(function (s, r) { return s + (Number(r.OralAmount) || 0); }, 0) + A('oralRevenue'));
+    var oralCost = round2_(periodRecords.reduce(function (s, r) { return s + (Number(r.OralCost) || 0); }, 0) + A('oralCost'));
+    var medCost = round2_(periodMedRows.reduce(function (s, o) { return s + o.costAmount; }, 0) + A('medCost') + oralCost);
     // ส่วนต่างคืนเซลล์ (ซื้อยาเพิ่ม charged above the เซลล์'s price) goes back to the เซลล์: an expense.
-    var salesRefund = round2_(periodMedRows.reduce(function (s, o) { return s + (o.refund || 0); }, 0));
+    var salesRefund = round2_(periodMedRows.reduce(function (s, o) { return s + (o.refund || 0); }, 0) + A('salesRefund'));
     var totalRevenue = round2_(clinicRevenue + medRevenue);
-    var expenseFromExpenses = periodExpenses.reduce(function (s, r) { return s + (Number(r.Amount) || 0); }, 0);
-    var expenseFromOrders = periodOrders.reduce(function (s, r) { return s + (Number(r.TotalAmount) || 0); }, 0);
-    var totalDoctorShare = periodRecords.reduce(function (s, r) { return s + (Number(r.DoctorShare) || 0); }, 0);
-    var salesShareTotal = periodRecords.reduce(function (s, r) { return s + (Number(r.SalesShare) || 0); }, 0);
+    var expenseFromExpenses = periodExpenses.reduce(function (s, r) { return s + (Number(r.Amount) || 0); }, 0) + A('expense');
+    var expenseFromOrders = periodOrders.reduce(function (s, r) { return s + (Number(r.TotalAmount) || 0); }, 0) + A('orders');
+    var totalDoctorShare = periodRecords.reduce(function (s, r) { return s + (Number(r.DoctorShare) || 0); }, 0) + A('doctorShareTotal');
+    var salesShareTotal = periodRecords.reduce(function (s, r) { return s + (Number(r.SalesShare) || 0); }, 0) + A('salesShareTotal');
     var clinicExpense = round2_(expenseFromExpenses + expenseFromOrders);
     var totalExpense = round2_(clinicExpense + medCost + totalDoctorShare + salesShareTotal + salesRefund);
     var profit = round2_(totalRevenue - totalExpense);
@@ -5479,6 +5490,7 @@ function getDashboardData(token, opts) {
 
     var uniquePatientIds = {};
     periodRecords.forEach(function (r) { uniquePatientIds[r.PatientID] = true; });
+    Object.keys(arch.patients).forEach(function (id) { uniquePatientIds[id] = true; });
     var customerCount = Object.keys(uniquePatientIds).length;
 
     // --- Monthly trend (last 12 calendar months ending this month), independent of the period filter ---
@@ -5498,8 +5510,14 @@ function getDashboardData(token, opts) {
     paidRecords.forEach(function (r) { var m = monthKey_(dateStr_(r.Date)); if (monthlyExpense[m] !== undefined) monthlyExpense[m] += (Number(r.DoctorShare) || 0) + (Number(r.SalesShare) || 0) + (Number(r.OralCost) || 0); });
     allExpenses.forEach(function (r) { var m = monthKey_(dateStr_(r.Date)); if (monthlyExpense[m] !== undefined) monthlyExpense[m] += Number(r.Amount) || 0; });
     allOrders.forEach(function (r) { var m = monthKey_(dateStr_(r.Date)); if (monthlyExpense[m] !== undefined) monthlyExpense[m] += Number(r.TotalAmount) || 0; });
+    archiveRows.forEach(function (r) {
+      var m = monthKey_(dateStr_(r.Date));
+      if (monthlyRevenue[m] === undefined) return;
+      var p = archiveRowParts_(r);
+      monthlyRevenue[m] += p.clinicRevenue + p.medRevenue; monthlyExpense[m] += p.clinicExpense + p.medCost;
+    });
     var monthlyTrend = months.map(function (m) {
-      var rev = monthlyRevenue[m], exp = monthlyExpense[m];
+      var rev = round2_(monthlyRevenue[m]), exp = round2_(monthlyExpense[m]);
       // Round 15 item 8.2: "profit" (บาท) is new, additive — the trend chart
       // now plots the profit LINE against the same money axis as the
       // revenue/expense BARS instead of a separate %-based right axis, so it
@@ -5510,9 +5528,9 @@ function getDashboardData(token, opts) {
     // --- Revenue by type: what the clinic collects from customers
     // (หัตถการ / โปรโมชัน / Canula / อื่นๆ) and from the sales people — the
     // slices add up to รายได้รวม (อื่นๆ is the remainder, so they always do). ---
-    var procRevenue = periodRecords.reduce(function (s, r) { return s + (Number(r.Amount) || 0); }, 0);
-    var promoRevenue = periodRecords.reduce(function (s, r) { return s + (Number(r.PromoAmount) || 0); }, 0);
-    var canulaRevenue = periodRecords.reduce(function (s, r) { return s + (isTrue_(r.UseCanula) ? (Number(r.CanulaAmount) || 0) : 0); }, 0);
+    var procRevenue = periodRecords.reduce(function (s, r) { return s + (Number(r.Amount) || 0); }, 0) + A('proc');
+    var promoRevenue = periodRecords.reduce(function (s, r) { return s + (Number(r.PromoAmount) || 0); }, 0) + A('promo');
+    var canulaRevenue = periodRecords.reduce(function (s, r) { return s + (isTrue_(r.UseCanula) ? (Number(r.CanulaAmount) || 0) : 0); }, 0) + A('canula');
     var byRevenueType = {
       'ค่าหัตถการ': procRevenue,
       'โปรโมชัน': promoRevenue,
@@ -5526,14 +5544,17 @@ function getDashboardData(token, opts) {
     // --- Revenue by doctor (their actual commission share, not the full record amount) ---
     var byDoctor = {};
     periodRecords.forEach(function (r) { recordDoctorShares_(r).forEach(function (d) { byDoctor[d.name] = (byDoctor[d.name] || 0) + (Number(d.share) || 0); }); });
+    Object.keys(arch.doctor).forEach(function (k) { byDoctor[k] = (byDoctor[k] || 0) + arch.doctor[k]; });
 
     // --- Revenue by sales (their actual commission share) ---
     var bySales = {};
     periodRecords.filter(function (r) { return r.SalesID; }).forEach(function (r) { bySales[r.SalesName] = (bySales[r.SalesName] || 0) + (Number(r.SalesShare) || 0); });
+    Object.keys(arch.sales).forEach(function (k) { bySales[k] = (bySales[k] || 0) + arch.sales[k]; });
 
     // --- Expense by category (Expenses sheet categories + a single lump "จัดซื้อ" bucket for Orders) ---
     var byExpenseCat = {};
     periodExpenses.forEach(function (r) { byExpenseCat[r.Category] = (byExpenseCat[r.Category] || 0) + (Number(r.Amount) || 0); });
+    Object.keys(arch.expense).forEach(function (k) { byExpenseCat[k] = (byExpenseCat[k] || 0) + arch.expense[k]; });
     if (expenseFromOrders > 0) byExpenseCat['จัดซื้อ'] = (byExpenseCat['จัดซื้อ'] || 0) + expenseFromOrders;
     if (medCost > 0) byExpenseCat['ต้นทุนยา'] = (byExpenseCat['ต้นทุนยา'] || 0) + medCost;
     if (totalDoctorShare > 0) byExpenseCat['ส่วนแบ่งแพทย์'] = (byExpenseCat['ส่วนแบ่งแพทย์'] || 0) + totalDoctorShare;
@@ -5552,6 +5573,7 @@ function getDashboardData(token, opts) {
         byPromotion[name] = (byPromotion[name] || 0) + (Number(p.amount) || 0);
       });
     });
+    Object.keys(arch.promo).forEach(function (k) { byPromotion[k] = (byPromotion[k] || 0) + arch.promo[k]; });
 
     // รายวัน (the selected range, at most its last 92 days):
     //  clinicDaily — รายได้คลินิก (ยอดรับชำระ without ซื้อยาเพิ่ม) vs ค่าใช้จ่ายคลินิก
@@ -5578,6 +5600,13 @@ function getDashboardData(token, opts) {
       var i = dayIdx[o.date];
       if (i === undefined) return;
       medicineDaily[i].revenue += o.clinicAmount; medicineDaily[i].cost += o.costAmount + (o.refund || 0); medicineDaily[i].profit += o.clinicAmount - o.costAmount - (o.refund || 0);
+    });
+    archiveRows.forEach(function (r) {
+      var i = dayIdx[dateStr_(r.Date)];
+      if (i === undefined) return;
+      var p = archiveRowParts_(r);
+      clinicDaily[i].revenue += p.clinicRevenue; clinicDaily[i].expense += p.clinicExpense;
+      medicineDaily[i].revenue += p.medRevenue; medicineDaily[i].cost += p.medCost; medicineDaily[i].profit += p.medRevenue - p.medCost;
     });
     clinicDaily.forEach(function (x) { x.revenue = round2_(x.revenue); x.expense = round2_(x.expense); x.profit = round2_(x.revenue - x.expense); });
     medicineDaily.forEach(function (x) { x.revenue = round2_(x.revenue); x.cost = round2_(x.cost); x.profit = round2_(x.profit); });
@@ -5880,6 +5909,8 @@ function clearSheetData_(sheet) {
 
 /** Every sheet except Staff and ClinicSettings, plus all counters except STAFF. */
 function clearBusinessData_() {
+  // A Backups row means real data was archived — wiping the sheets (seed / clear) is not for that system.
+  if (getSheet_(CONFIG.SHEETS.BACKUPS).getLastRow() > 1) throw ValidationError_('ระบบนี้เคย Backup ข้อมูลจริงแล้ว — ไม่อนุญาตให้ล้างข้อมูลหรือสร้างข้อมูลตัวอย่าง');
   var keep = {};
   keep[CONFIG.SHEETS.STAFF] = true;
   keep[CONFIG.SHEETS.CLINIC_SETTINGS] = true;
@@ -5947,7 +5978,7 @@ function deleteSheetRows_(sheet, rowNums) {
 function purgeDataBefore_(cutoff, dryRun) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(cutoff || ''))) throw ValidationError_('วันที่ตัดยอดไม่ถูกต้อง (yyyy-MM-dd)');
   var S = CONFIG.SHEETS, skip = {};
-  [S.STAFF, S.CLINIC_SETTINGS, S.COUNTERS, S.ORDER_LINES, S.CATEGORIES].forEach(function (n) { skip[n] = true; });
+  [S.STAFF, S.CLINIC_SETTINGS, S.COUNTERS, S.ORDER_LINES, S.CATEGORIES, S.DAILY_SUMMARY, S.BACKUPS].forEach(function (n) { skip[n] = true; });
   var counts = {}, kept = {}, doomed = {};
   Object.keys(S).forEach(function (key) {
     var name = S[key];
@@ -7327,4 +7358,307 @@ function buildLineCalendarMessage_(year, month) {
       }
     }
   };
+}
+/* ======================================================================
+   BACKUP — ย้ายข้อมูลที่จบแล้วไปไฟล์ใหม่ (admin only, same flow as VALIN)
+   The finished part of the big sheets is copied into a NEW spreadsheet saved in the Drive folder "back up data" (inside the
+   root folder), checked, and then removed from the main sheets so they stay fast. What the dashboard needs from those days
+   is first written to DailySummary (see CONFIG.HEADERS.DailySummary), and every backup is listed in Backups.
+   "จบแล้ว" before the cutoff date: paid / cancelled treatment records and the จัดยา-เบิกยา lines of them, ค่าใช้จ่าย,
+   ใบสั่งซื้อที่ตรวจรับแล้ว (+ lines), the AuditLog and the StockLog (each item's latest entry stays: it is the item's balance).
+   Not moved: unfinished records, patients, stock, ยาฝาก lots, settings.
+   ====================================================================== */
+var BACKUP_FOLDER_NAME_ = 'back up data';
+// [sheet name, CONFIG.SHEETS key] in the order they are written to the backup file
+var BACKUP_SHEETS_ = [
+  ['Records', 'RECORDS'], ['MedWithdrawals', 'MED_WITHDRAWALS'], ['StockLog', 'STOCK_LOG'], ['Expenses', 'EXPENSES'],
+  ['Orders', 'ORDERS'], ['OrderLines', 'ORDER_LINES'], ['AuditLog', 'AUDIT_LOG']
+];
+// How each DailySummary metric feeds the dashboard's daily / monthly charts (see archiveRowParts_)
+var ARCH_CLINIC_REVENUE_ = { customerRevenue: 1, medicinePurchased: -1 };          // รายได้คลินิก = ยอดรับชำระ − ซื้อยาเพิ่ม
+var ARCH_CLINIC_EXPENSE_ = ['doctorShareTotal', 'salesShareTotal', 'oralCost', 'expense', 'orders'];
+var ARCH_MED_COST_ = ['medCost', 'salesRefund'];                                   // ต้นทุนยา (+ ส่วนต่างคืนเซลล์)
+
+/** What would move for `cutoff` (rows dated before it): {move:{sheet:[rows]}, keep:{sheet:[rows]}, from, to}. Reads only. */
+function backupPlan_(cutoff) {
+  var S = CONFIG.SHEETS;
+  var records = getRows_(getSheet_(S.RECORDS)), wds = getRows_(getSheet_(S.MED_WITHDRAWALS));
+  var logs = getRows_(getSheet_(S.STOCK_LOG)), expenses = getRows_(getSheet_(S.EXPENSES));
+  var orders = getRows_(getSheet_(S.ORDERS)), lines = getRows_(getSheet_(S.ORDER_LINES)), audit = getRows_(getSheet_(S.AUDIT_LOG));
+  var plan = { move: {}, keep: {}, cutoff: cutoff };
+  var split = function (name, rows, fn) {
+    plan.move[name] = []; plan.keep[name] = [];
+    rows.forEach(function (r) { (fn(r) ? plan.move[name] : plan.keep[name]).push(r); });
+  };
+  var rids = {}, movedRid = {};
+  records.forEach(function (r) { rids[r.RID] = true; });
+  split('Records', records, function (r) {
+    var done = (r.Status === 'paid' || r.Status === 'cancelled') && dateStr_(r.Date) < cutoff;
+    if (done) movedRid[r.RID] = true;
+    return done;
+  });
+  // a line goes with its record; a line whose record is gone (or never had one) goes when it is old enough
+  split('MedWithdrawals', wds, function (w) {
+    if (w.RecordID && rids[w.RecordID]) return !!movedRid[w.RecordID];
+    return dateStr_(w.Date) < cutoff;
+  });
+  // each item's latest entry (same pick as latestStockLogByItem_) stays: resyncStockQtyFromLog_ reads its จำนวนคงเหลือ
+  var latest = {};
+  logs.forEach(function (l) {
+    var cur = latest[l.ItemID];
+    if (!cur || dateStr_(l.Date) > dateStr_(cur.Date) || (dateStr_(l.Date) === dateStr_(cur.Date) && String(l.CreatedAt) > String(cur.CreatedAt))) latest[l.ItemID] = l;
+  });
+  split('StockLog', logs, function (l) { return dateStr_(l.Date) < cutoff && latest[l.ItemID] !== l; });
+  split('Expenses', expenses, function (e) { return dateStr_(e.Date) < cutoff; });
+  var movedPo = {};
+  split('Orders', orders, function (o) { var m = orderStatusOf_(o) === 'received' && dateStr_(o.Date) < cutoff; if (m) movedPo[o.PoID] = true; return m; }); // รอตรวจรับ stays
+  split('OrderLines', lines, function (l) { return !!movedPo[l.PoID]; });
+  split('AuditLog', audit, function (a) { return dateStr_(a.Timestamp) < cutoff; });
+  var from = '', to = '';
+  [['Records', 'Date'], ['MedWithdrawals', 'Date'], ['StockLog', 'Date'], ['Expenses', 'Date'], ['Orders', 'Date'], ['AuditLog', 'Timestamp']].forEach(function (p) {
+    plan.move[p[0]].forEach(function (r) {
+      var d = dateStr_(r[p[1]]);
+      if (!d) return;
+      if (!from || d < from) from = d;
+      if (!to || d > to) to = d;
+    });
+  });
+  plan.from = from; plan.to = to;
+  return plan;
+}
+
+function backupCounts_(plan) {
+  var out = {};
+  BACKUP_SHEETS_.forEach(function (b) { out[b[0]] = { move: plan.move[b[0]].length, keep: plan.keep[b[0]].length }; });
+  // records that stay because they are not finished (not paid / cancelled)
+  out.RecordsUnfinished = plan.keep.Records.filter(function (r) { return r.Status !== 'paid' && r.Status !== 'cancelled'; }).length;
+  return out;
+}
+
+/** Admin: what a backup up to `cutoff` (exclusive) would move, per kind of data. */
+function getBackupPreview(token, cutoff) {
+  return safeCall_(function () {
+    requireAuth_(token, 'admin');
+    requireDateStr_(cutoff, 'วันที่ตัดยอด');
+    if (cutoff > todayStr_()) throw ValidationError_('วันที่ตัดยอดต้องไม่เกินวันนี้');
+    var plan = backupPlan_(cutoff);
+    return { ok: true, data: { cutoff: cutoff, from: plan.from, to: plan.to, counts: backupCounts_(plan) } };
+  });
+}
+
+function mapBackupOut_(b) {
+  var counts = {};
+  try { counts = JSON.parse(b.CountsJSON || '{}'); } catch (e) { counts = {}; }
+  return {
+    id: b.BackupID, createdAt: String(b.CreatedAt), createdBy: b.CreatedBy, from: dateStr_(b.FromDate), to: dateStr_(b.ToDate), cutoff: dateStr_(b.CutoffDate),
+    fileName: b.FileName, spreadsheetId: b.SpreadsheetID, url: b.SpreadsheetUrl, status: b.Status, counts: counts
+  };
+}
+
+/** Admin: every backup file made so far, newest first (name, sheet id, link, counts). */
+function listBackups(token) {
+  return safeCall_(function () {
+    requireAuth_(token, 'admin');
+    var rows = getRows_(getSheet_(CONFIG.SHEETS.BACKUPS)).map(mapBackupOut_);
+    rows.sort(function (a, b) { return b.createdAt.localeCompare(a.createdAt); });
+    return { ok: true, data: rows };
+  });
+}
+
+/**
+ * The days moved to backups between dateFrom and dateTo, summed for the dashboard:
+ * {m:{metric:total}, doctor, sales, promo, expense:{category:amount}, patients:{id:true}}; m.expense = all ค่าใช้จ่าย.
+ */
+function archiveSummary_(dateFrom, dateTo, rows) {
+  var out = { m: {}, doctor: {}, sales: {}, promo: {}, expense: {}, patients: {} };
+  var byKey = { doctorShare: out.doctor, salesShare: out.sales, promoLine: out.promo, expense: out.expense };
+  (rows || getRows_(getSheet_(CONFIG.SHEETS.DAILY_SUMMARY))).forEach(function (r) {
+    var d = dateStr_(r.Date);
+    if (d < dateFrom || d > dateTo) return;
+    var amt = Number(r.Amount) || 0, key = String(r.Key || ''), map = byKey[r.Metric];
+    if (r.Metric === 'patient') { out.patients[key] = true; return; }
+    if (map) map[key] = (map[key] || 0) + amt;
+    if (!map || r.Metric === 'expense') out.m[r.Metric] = (out.m[r.Metric] || 0) + amt;
+  });
+  return out;
+}
+/** One metric total of an archiveSummary_ (0 when that metric has no rows). */
+function archM_(arch, metric) { return Number(arch.m[metric]) || 0; }
+/** A DailySummary row's part of the dashboard's daily / monthly charts: {clinicRevenue, clinicExpense, medRevenue, medCost}. */
+function archiveRowParts_(r) {
+  var amt = Number(r.Amount) || 0, metric = r.Metric;
+  return {
+    clinicRevenue: (ARCH_CLINIC_REVENUE_[metric] || 0) * amt,
+    clinicExpense: ARCH_CLINIC_EXPENSE_.indexOf(metric) > -1 ? amt : 0,
+    medRevenue: metric === 'medRevenue' ? amt : 0,
+    medCost: ARCH_MED_COST_.indexOf(metric) > -1 ? amt : 0
+  };
+}
+
+/** DailySummary rows (objects) for what the plan moves — only paid records count, like the dashboard. */
+function backupSummaryRows_(plan, backupId) {
+  var acc = {}, order = [];
+  var add = function (date, metric, key, amount, count) {
+    var k = date + '|' + metric + '|' + key;
+    if (!acc[k]) { acc[k] = { Date: date, Metric: metric, Key: key, Amount: 0, Count: 0, BackupID: backupId }; order.push(k); }
+    acc[k].Amount = round2_(acc[k].Amount + (Number(amount) || 0));
+    acc[k].Count += count || 0;
+  };
+  plan.move.Records.filter(function (r) { return r.Status === 'paid'; }).forEach(function (r) {
+    var d = dateStr_(r.Date);
+    add(d, 'customerRevenue', '', recordCollected_(r), 1);
+    add(d, 'medicinePurchased', '', Number(r.MedicineAmount) || 0);
+    add(d, 'oralRevenue', '', Number(r.OralAmount) || 0);
+    add(d, 'oralCost', '', Number(r.OralCost) || 0);
+    add(d, 'proc', '', Number(r.Amount) || 0);
+    add(d, 'promo', '', Number(r.PromoAmount) || 0);
+    add(d, 'canula', '', isTrue_(r.UseCanula) ? (Number(r.CanulaAmount) || 0) : 0);
+    add(d, 'doctorShareTotal', '', Number(r.DoctorShare) || 0);
+    add(d, 'salesShareTotal', '', Number(r.SalesShare) || 0);
+    if (r.SalesID) add(d, 'salesShare', r.SalesName || '', Number(r.SalesShare) || 0);
+    recordDoctorShares_(r).forEach(function (x) { add(d, 'doctorShare', x.name || '', Number(x.share) || 0); });
+    parseLineItems_(r.PromoJSON).forEach(function (p) { add(d, 'promoLine', p.name || 'ไม่ระบุ', Number(p.amount) || 0); });
+    if (r.PatientID && !acc[d + '|patient|' + r.PatientID]) add(d, 'patient', r.PatientID, 0, 1);
+  });
+  plan.move.Expenses.forEach(function (e) { add(dateStr_(e.Date), 'expense', e.Category || '', Number(e.Amount) || 0, 1); });
+  plan.move.Orders.forEach(function (o) { if (orderTypeOf_(o) !== 'sales') add(dateStr_(o.Date), 'orders', '', Number(o.TotalAmount) || 0, 1); });
+  salesReportRows_(function () { return true; }, { withdrawals: plan.move.MedWithdrawals, records: plan.move.Records }).forEach(function (o) {
+    add(o.date, 'medRevenue', '', o.clinicAmount);
+    add(o.date, 'medCost', '', o.costAmount);
+    add(o.date, 'salesRefund', '', o.refund || 0);
+  });
+  return order.map(function (k) { return acc[k]; }).filter(function (o) { return o.Amount || o.Count; });
+}
+
+/** Rows (objects from getRows_) -> 2-D values in header order; numbers read back as dates are written back as numbers. */
+function backupValues_(sheetName, headers, rows) {
+  var numCols = CONFIG.NUMBER_COLUMNS[sheetName] || [];
+  return rows.map(function (o) {
+    return headers.map(function (h) {
+      var v = o[h] !== undefined && o[h] !== null ? o[h] : '';
+      return isDate_(v) && numCols.indexOf(h) > -1 ? numOrNull_(v) : v;
+    });
+  });
+}
+
+/** setValues that first adds rows to the sheet when it is too short. */
+function setValuesGrowing_(sheet, rowIndex, numRows, numCols, values) {
+  var missing = rowIndex + numRows - 1 - sheet.getMaxRows();
+  if (missing > 0) sheet.insertRowsAfter(sheet.getMaxRows(), Math.max(1000, missing));
+  sheet.getRange(rowIndex, 1, numRows, numCols).setValues(values);
+}
+
+/** Writes values from startRow (default: below the header row) of `sh` in blocks (a big block in one call can time out). */
+function backupWriteBlocks_(sh, headers, values, startRow) {
+  var BLOCK = 1000, base = startRow || 2;
+  for (var i = 0; i < values.length; i += BLOCK) {
+    var part = values.slice(i, i + BLOCK);
+    setValuesGrowing_(sh, base + i, part.length, headers.length, part);
+  }
+}
+
+/** Appends many objects under the last row of `sheet` in one go. */
+function appendRows_(sheet, headers, objs) {
+  if (!objs.length) return;
+  var rowIndex = sheet.getLastRow() + 1;
+  var values = objs.map(function (o) { return rowValues_(sheet, headers, o); });
+  var missing = rowIndex + values.length - 1 - sheet.getMaxRows();
+  if (missing > 0) sheet.insertRowsAfter(sheet.getMaxRows(), Math.max(1000, missing));
+  resetNumberFormats_(sheet, headers, rowIndex, values.length);
+  backupWriteBlocks_(sheet, headers, values, rowIndex);
+}
+
+/**
+ * Admin: moves the finished data dated before payload.cutoff to a new spreadsheet in the Drive folder "back up data", then
+ * removes it from the main sheets. payload: {cutoff, username, password} — the username and password of the admin who is
+ * logged in are asked again first. Returns the backup entry (name, sheet id, link, counts).
+ */
+function backupData(token, payload) {
+  return safeCall_(function () {
+    var session = requireAuth_(token, 'admin');
+    payload = payload || {};
+    requireDateStr_(payload.cutoff, 'วันที่ตัดยอด');
+    var cutoff = payload.cutoff;
+    if (cutoff > todayStr_()) throw ValidationError_('วันที่ตัดยอดต้องไม่เกินวันนี้');
+    // confirm again: the logged-in admin's own username + password
+    var user = findStaffRow_(getRows_(getSheet_(CONFIG.SHEETS.STAFF)), session.staffId, { username: session.username });
+    if (!user || String(payload.username || '').trim().toLowerCase() !== String(user.Username).toLowerCase()) throw ValidationError_('ชื่อผู้ใช้ไม่ตรงกับบัญชีที่เข้าสู่ระบบอยู่');
+    if (hashPassword_(String(payload.password || ''), user.PasswordSalt) !== user.PasswordHash) throw ValidationError_('รหัสผ่านไม่ถูกต้อง');
+
+    var lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+    try {
+      var bsheet = getSheet_(CONFIG.SHEETS.BACKUPS);
+      var pending = getRows_(bsheet).filter(function (b) { return b.Status !== 'เสร็จสิ้น'; })[0];
+      if (pending) throw ValidationError_('มี backup ' + pending.FileName + ' ที่ยังทำไม่เสร็จ (' + pending.Status + ') — ตรวจสอบไฟล์นั้นก่อนทำ backup ใหม่');
+      var plan = backupPlan_(cutoff);
+      var total = 0;
+      BACKUP_SHEETS_.forEach(function (b) { total += plan.move[b[0]].length; });
+      if (!total) throw ValidationError_('ไม่มีข้อมูลที่จบแล้วก่อนวันที่ ' + cutoff + ' ให้ย้าย');
+
+      var rootId = PropertiesService.getScriptProperties().getProperty(CONFIG.PROPS.ROOT_FOLDER_ID);
+      var root = null;
+      if (rootId) { try { root = DriveApp.getFolderById(rootId); } catch (e) { root = null; } }
+      if (!root) root = DriveApp.getFolderById(ensureDriveFolders_().rootId);
+      var folder = getOrCreateChildFolder_(root, BACKUP_FOLDER_NAME_);
+
+      // 1. the new spreadsheet, filled and checked BEFORE anything is removed
+      var fileName = 'ข้อมูลตั้งแต่ ' + plan.from + ' - ' + plan.to;
+      var ss = SpreadsheetApp.create(fileName);
+      DriveApp.getFileById(ss.getId()).moveTo(folder);
+      var first = true;
+      BACKUP_SHEETS_.forEach(function (b) {
+        var headers = CONFIG.HEADERS[b[0]], rows = plan.move[b[0]];
+        var sh = first ? ss.getSheets()[0].setName(b[0]) : ss.insertSheet(b[0]);
+        first = false;
+        sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+        sh.setFrozenRows(1);
+        if (!rows.length) return;
+        var values = backupValues_(b[0], headers, rows);
+        if (rows.length + 1 > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), rows.length + 1 - sh.getMaxRows());
+        (CONFIG.TEXT_COLUMNS[b[0]] || []).forEach(function (col) {
+          var idx = headers.indexOf(col);
+          if (idx > -1) sh.getRange(2, idx + 1, rows.length, 1).setNumberFormat('@');
+        });
+        backupWriteBlocks_(sh, headers, values);
+      });
+      SpreadsheetApp.flush();
+      BACKUP_SHEETS_.forEach(function (b) {
+        var written = Math.max(0, ss.getSheetByName(b[0]).getLastRow() - 1);
+        if (written !== plan.move[b[0]].length) throw new Error('ตรวจสอบไฟล์ backup ไม่ผ่าน: ' + b[0] + ' เขียนได้ ' + written + ' จาก ' + plan.move[b[0]].length + ' แถว (ยังไม่ได้ลบข้อมูลเดิม)');
+      });
+
+      // 2. what the dashboard needs, then the registry entry
+      var backupId = 'BK' + nextSeq_('BACKUP', 4);
+      var counts = backupCounts_(plan);
+      appendRows_(getSheet_(CONFIG.SHEETS.DAILY_SUMMARY), CONFIG.HEADERS.DailySummary, backupSummaryRows_(plan, backupId));
+      var entry = {
+        BackupID: backupId, CreatedAt: nowStr_(), CreatedBy: session.username, FromDate: plan.from, ToDate: plan.to, CutoffDate: cutoff,
+        FileName: fileName, SpreadsheetID: ss.getId(), SpreadsheetUrl: ss.getUrl(), FolderID: folder.getId(), CountsJSON: JSON.stringify(counts), Status: 'กำลังล้างข้อมูลเดิม'
+      };
+      var entryRow = appendRow_(bsheet, CONFIG.HEADERS.Backups, entry);
+
+      // 3. remove what was moved: each sheet is rewritten with only the rows that stay
+      BACKUP_SHEETS_.forEach(function (b) {
+        var headers = CONFIG.HEADERS[b[0]], sh = getSheet_(CONFIG.SHEETS[b[1]]);
+        if (!plan.move[b[0]].length) return;
+        var keep = backupValues_(b[0], headers, plan.keep[b[0]]);
+        var last = sh.getLastRow();
+        if (last > 1) sh.getRange(2, 1, last - 1, Math.max(headers.length, sh.getLastColumn())).clearContent();
+        if (keep.length) {
+          resetNumberFormats_(sh, headers, 2, keep.length);
+          backupWriteBlocks_(sh, headers, keep);
+        }
+      });
+      entry.Status = 'เสร็จสิ้น';
+      updateRowByIndex_(bsheet, CONFIG.HEADERS.Backups, entryRow, entry);
+      writeAudit_(session, 'BACKUP', 'Backup', backupId, fileName + ' · ' + total + ' แถว');
+      bumpDashboardCacheVersion_();
+      invalidateStockLiteCache_();
+      invalidatePatientsLiteCache_();
+      return { ok: true, data: mapBackupOut_(entry) };
+    } finally {
+      lock.releaseLock();
+    }
+  });
 }
