@@ -256,7 +256,12 @@ var CONFIG = {
     // expiry, qtyDeposit}; keep 'deposit' puts the rest into the patient's ยาฝาก (stock-listed ยา only).
     // OralJSON (รายการยาทาน, under รายการอื่นๆ): {itemId?, name, other, qty, unitPrice, amount, unitCost};
     // taken out of the ยาทาน stock, charged (OralAmount, in ยอดรับชำระ, no sales/doctor %), OralCost = ราคาทุน.
-    Records: ['RID', 'Date', 'PatientID', 'PatientName', 'Phone', 'ServiceCategory', 'Detail', 'DoctorID', 'DoctorName', 'SalesID', 'SalesName', 'PaymentMethod', 'SuppliesJSON', 'UseCanula', 'CanulaAmount', 'Amount', 'Status', 'ReceiptNo', 'Note', 'CreatedBy', 'CreatedAt', 'UpdatedAt', 'OtherAmount', 'SalesCommissionPct', 'SalesShare', 'DoctorCommissionPct', 'DoctorShareRaw', 'DoctorShare', 'DoctorShareNote', 'ClinicShare', 'VisitStatus', 'UsePromo', 'PromoJSON', 'PromoAmount', 'UseMedicine', 'MedicineJSON', 'MedicineAmount', 'UseOther', 'OtherItemsJSON', 'SupplierPayAmount', 'OpdImageFileId', 'UseSupplies', 'UseOwnMed', 'OwnMedJSON', 'UseDepositUse', 'DepositUseJSON', 'UseMessenger', 'MessengerJSON', 'StockApplied', 'UseProcedure', 'ProcedureJSON', 'DoctorSharesJSON', 'WithdrawJSON', 'QueueDate', 'QueueDoctor', 'QueuePay', 'VisitDoctorID', 'VisitDoctorName', 'CanulaNote', 'BeforePhotoIds', 'AfterPhotoIds', 'MedicineCost', 'OpdCreatedAt', 'TreatedAt', 'EditRemarksJSON', 'UseShip', 'ShipJSON', 'UseMsgIn', 'MsgInJSON', 'UseOral', 'OralJSON', 'OralAmount', 'OralCost'],
+    // CanulaJSON: the Canula (เข็มทู่) lines {name (หมายเหตุ), qty, unitPrice, amount}; CanulaAmount is their sum
+    // (rows from before it: one line from CanulaAmount + CanulaNote, see canulaItemsOf_). ราคา/หน่วย starts from
+    // ClinicSettings canulaUnitPrice.
+    // PaymentJSON: a bill paid with more than one method, [{method, amount}] (PaymentMethod then reads e.g.
+    // "เงินสด 3,000 + โอนเงิน 300"); blank when paid with one method (see recordPayments_).
+    Records: ['RID', 'Date', 'PatientID', 'PatientName', 'Phone', 'ServiceCategory', 'Detail', 'DoctorID', 'DoctorName', 'SalesID', 'SalesName', 'PaymentMethod', 'SuppliesJSON', 'UseCanula', 'CanulaAmount', 'Amount', 'Status', 'ReceiptNo', 'Note', 'CreatedBy', 'CreatedAt', 'UpdatedAt', 'OtherAmount', 'SalesCommissionPct', 'SalesShare', 'DoctorCommissionPct', 'DoctorShareRaw', 'DoctorShare', 'DoctorShareNote', 'ClinicShare', 'VisitStatus', 'UsePromo', 'PromoJSON', 'PromoAmount', 'UseMedicine', 'MedicineJSON', 'MedicineAmount', 'UseOther', 'OtherItemsJSON', 'SupplierPayAmount', 'OpdImageFileId', 'UseSupplies', 'UseOwnMed', 'OwnMedJSON', 'UseDepositUse', 'DepositUseJSON', 'UseMessenger', 'MessengerJSON', 'StockApplied', 'UseProcedure', 'ProcedureJSON', 'DoctorSharesJSON', 'WithdrawJSON', 'QueueDate', 'QueueDoctor', 'QueuePay', 'VisitDoctorID', 'VisitDoctorName', 'CanulaNote', 'BeforePhotoIds', 'AfterPhotoIds', 'MedicineCost', 'OpdCreatedAt', 'TreatedAt', 'EditRemarksJSON', 'UseShip', 'ShipJSON', 'UseMsgIn', 'MsgInJSON', 'UseOral', 'OralJSON', 'OralAmount', 'OralCost', 'CanulaJSON', 'PaymentJSON'],
     // MedDeposits — ยาฝาก, one row per lot: a record's medicine line that is
     // not all used creates a lot (RecordID = that record) with its own
     // ExpiryDate; รายการใช้ยาฝาก takes from the patient's lots, earliest
@@ -1826,6 +1831,10 @@ function saveClinicSettings(token, settings) {
     STOCK_LOCS_.forEach(function (l) { delete settings['stockOff' + l]; });
     // ชื่อ Stock A / B (shown instead of "Stock A" / "Stock B" everywhere): short, and not the same name twice.
     ['stockNameA', 'stockNameB'].forEach(function (k) { if (k in settings) settings[k] = String(settings[k] || '').trim().slice(0, 30); });
+    // ราคา Canula ต่อหน่วย: the ราคา/หน่วย a new Canula line in the record form starts with (blank = none).
+    if ('canulaUnitPrice' in settings && settings.canulaUnitPrice !== '' && settings.canulaUnitPrice != null) {
+      settings.canulaUnitPrice = requireNumber_(settings.canulaUnitPrice, 'ราคา Canula ต่อหน่วย', { min: 0 });
+    }
     var nameA = ('stockNameA' in settings ? settings.stockNameA : (rows.filter(function (r) { return r.Key === 'stockNameA'; })[0] || {}).Value) || 'Stock A';
     var nameB = ('stockNameB' in settings ? settings.stockNameB : (rows.filter(function (r) { return r.Key === 'stockNameB'; })[0] || {}).Value) || 'Stock B';
     if (String(nameA).toLowerCase() === String(nameB).toLowerCase()) throw ValidationError_('ชื่อ Stock A และ Stock B ต้องไม่ซ้ำกัน');
@@ -2806,10 +2815,12 @@ function deleteStockLogEntry(token, id) {
      used) becomes a ยาฝาก lot expiring on `expiry`, amount = qtyDispensed *
      unitPrice is charged. Lines saved before this shape existed are
      {name, amount}.
-   OwnMedJSON {name,qty} "รายการถือยาเข้า", DepositUseJSON {itemId,name,qty,
-     lots} "รายการใช้ยาฝาก" (taken out of MedDeposits lots, see
-     planDeposits_), MessengerJSON {name,qty,note} "รายการ Messenger/พัสดุ"
-     — none of these three are charged.
+   OwnMedJSON "รายการถือยาเข้า" {other,itemId,name,qtyIn,qtyUsed,keep,
+     qtyDeposit,expiry,note} (older rows {name,qty}, see ownMedItemsOf_),
+     DepositUseJSON "รายการยาฝาก" {itemId,name,qtyIn,qtyUsed,keep,qty,note,
+     lots} — qty is what came out of the MedDeposits lots (see
+     depositUseLines_ / planDeposits_), MessengerJSON {name,qty,note}
+     "รายการ Messenger/พัสดุ" — none of these three are charged.
    ProcedureJSON: "รายการหัตถการ" — {procId,name,price,amount}; Amount is
      their sum.
    StockApplied: 'TRUE' on records created since stock/deposit effects
@@ -2826,6 +2837,61 @@ function parseSupplies_(json) {
 // Round 13: PromoJSON/MedicineJSON/OtherItemsJSON share the same "JSON array
 // or blank" shape as SuppliesJSON — reuse the same lenient parser.
 var parseLineItems_ = parseSupplies_;
+
+/** The record's Canula lines: CanulaJSON, or (rows from before it) the one CanulaAmount + CanulaNote as a single line. */
+function canulaItemsOf_(r) {
+  var list = parseLineItems_(r.CanulaJSON);
+  if (list.length || !isTrue_(r.UseCanula)) return list;
+  return Number(r.CanulaAmount) > 0 ? [{ name: String(r.CanulaNote || ''), qty: 1, amount: Number(r.CanulaAmount) }] : [];
+}
+
+/**
+ * Canula lines from the record form -> {items: [{name, qty, unitPrice?, amount}], total}: amount = qty × ราคา/หน่วย
+ * (the client's amount is ignored); an older line without a price keeps its amount. A client without the lines
+ * sends only canulaAmount (+ canulaNote) as one line. Not commissioned (counts as clinic money).
+ */
+function canulaLines_(record) {
+  if (!record.useCanula) return { items: [], total: 0 };
+  var src = Array.isArray(record.canulaItems) ? record.canulaItems.filter(function (it) { return it && (String(it.name || '').trim() || Number(it.amount) > 0 || (it.unitPrice !== '' && it.unitPrice != null)); }) : null;
+  if (!src) src = Number(record.canulaAmount) > 0 ? [{ name: record.canulaNote || '', qty: 1, amount: record.canulaAmount }] : [];
+  var total = 0;
+  var items = src.map(function (it, i) {
+    var line = ' (Canula บรรทัดที่ ' + (i + 1) + ')';
+    var qty = requireNumber_(it.qty == null || it.qty === '' ? 1 : it.qty, 'จำนวน' + line, { min: 0 });
+    var hasPrice = it.unitPrice != null && it.unitPrice !== '';
+    var unitPrice = hasPrice ? requireNumber_(it.unitPrice, 'ราคา/หน่วย' + line, { min: 0 }) : null;
+    var amount = hasPrice ? round2_(qty * unitPrice) : requireNumber_(it.amount || 0, 'จำนวนเงิน' + line, { min: 0 });
+    total += amount;
+    var out = { name: String(it.name || '').trim().slice(0, 200), qty: qty, amount: amount };
+    if (hasPrice) out.unitPrice = unitPrice;
+    return out;
+  });
+  return { items: items, total: round2_(total) };
+}
+
+// A bill paid with more than one method: PaymentJSON [{method, amount}]; one method: the whole bill on PaymentMethod.
+var PAY_BASIC_ = ['เงินสด', 'บัตรเครดิต', 'โอนเงิน'];
+/** The bill split by payment method, [{method, amount}]; if the bill changed after paying, the last method takes the difference. */
+function recordPayments_(r, collected) {
+  var list = parseLineItems_(r.PaymentJSON).filter(function (p) { return p && p.method; });
+  if (list.length < 2) return r.PaymentMethod ? [{ method: String(r.PaymentMethod), amount: collected }] : [];
+  var out = list.map(function (p) { return { method: String(p.method), amount: round2_(Number(p.amount) || 0) }; });
+  var others = out.slice(0, -1).reduce(function (sum, p) { return sum + p.amount; }, 0);
+  out[out.length - 1].amount = round2_(collected - others);
+  return out;
+}
+function payLabel_(list) {
+  return list.map(function (p) { return p.method + ' ' + Number(p.amount).toLocaleString('en-US', { maximumFractionDigits: 2 }); }).join(' + ');
+}
+/** วิธีชำระ text -> its kind for the daily summary: cash / transfer / card / sales ("ชำระผ่านเซลล์ (ชื่อ)") / other ("อื่นๆ (ระบุ)"). */
+function payKind_(method) {
+  var m = String(method || '');
+  if (m === 'เงินสด') return 'cash';
+  if (m === 'โอนเงิน') return 'transfer';
+  if (m === 'บัตรเครดิต') return 'card';
+  if (/^ชำระผ่านเซลล์/.test(m)) return 'sales';
+  return m ? 'other' : '';
+}
 
 function mapRecordOut_(r) {
   var useCanula = String(r.UseCanula) === 'TRUE' || r.UseCanula === true;
@@ -2878,8 +2944,8 @@ function mapRecordOut_(r) {
     useProcedure: isTrue_(r.UseProcedure), procedureItems: parseLineItems_(r.ProcedureJSON),
     useOther: String(r.UseOther) === 'TRUE' || r.UseOther === true,
     otherItems: parseLineItems_(r.OtherItemsJSON),
-    useOwnMed: isTrue_(r.UseOwnMed), ownMedItems: parseLineItems_(r.OwnMedJSON),
-    useDepositUse: isTrue_(r.UseDepositUse), depositUseItems: parseLineItems_(r.DepositUseJSON),
+    useOwnMed: isTrue_(r.UseOwnMed), ownMedItems: ownMedItemsOf_(r.OwnMedJSON),
+    useDepositUse: isTrue_(r.UseDepositUse), depositUseItems: depositUseItemsOf_(r.DepositUseJSON),
     useMessenger: isTrue_(r.UseMessenger), messengerItems: parseLineItems_(r.MessengerJSON),
     // ราคาทุน stays on the server (รายงานจัดยารอส่ง shows it to admins).
     useShip: isTrue_(r.UseShip), shipItems: parseLineItems_(r.ShipJSON).map(function (l) { var o = Object.assign({}, l); delete o.unitCost; return o; }),
@@ -2898,7 +2964,8 @@ function mapRecordOut_(r) {
     // Round 14 item 1.7 — OPD photo attachment (Drive fileId; fetch its
     // viewable data URI via getPhotoUrl, same as patient/login/logo photos).
     opdImageFileId: r.OpdImageFileId || '',
-    canulaNote: r.CanulaNote || '',
+    canulaNote: r.CanulaNote || '', canulaItems: canulaItemsOf_(r),
+    payments: recordPayments_(r, collected),
     beforePhotoIds: parseIdList_(r.BeforePhotoIds), afterPhotoIds: parseIdList_(r.AfterPhotoIds)
   };
 }
@@ -3231,11 +3298,15 @@ function computeDailySummaryDetail_(dateStr) {
     promoAmountTotal += promo;
     medicineAmountTotal += medicine;
     clinicNet += recordClinicShare_(r);
-    if (r.PaymentMethod === 'เงินสด') cashAmount += collected;
-    else if (r.PaymentMethod === 'โอนเงิน') transferAmount += collected;
-    else if (r.PaymentMethod === 'บัตรเครดิต') cardAmount += collected;
-    else if (/^ชำระผ่านเซลล์/.test(String(r.PaymentMethod || ''))) salesPayAmount += collected; // "ชำระผ่านเซลล์ (ชื่อเซลล์)"
-    else if (r.PaymentMethod) otherPayAmount += collected; // "อื่นๆ (ระบุ)"
+    // A bill paid with several methods counts each part under its own method (see recordPayments_).
+    recordPayments_(r, collected).forEach(function (p) {
+      var kind = payKind_(p.method), amt = Number(p.amount) || 0;
+      if (kind === 'cash') cashAmount += amt;
+      else if (kind === 'transfer') transferAmount += amt;
+      else if (kind === 'card') cardAmount += amt;
+      else if (kind === 'sales') salesPayAmount += amt; // "ชำระผ่านเซลล์ (ชื่อเซลล์)"
+      else if (kind === 'other') otherPayAmount += amt; // "อื่นๆ (ระบุ)"
+    });
     recordDoctorShares_(r).forEach(function (d) {
       if (!doctorMap[d.doctorId]) doctorMap[d.doctorId] = { name: d.name, amount: 0, topped: false };
       doctorMap[d.doctorId].amount += Number(d.share) || 0;
@@ -3375,12 +3446,14 @@ function medicineLines_(record, ctx) {
     }
     var unitPrice = requireNumber_(it.unitPrice || 0, 'ราคาต่อหน่วย' + line, { min: 0 });
     var oldLine = (ctx.oldLines || []).filter(function (l) { return l.itemId === it.itemId && l.priceSource; })[0];
-    // ยาอื่นๆ (not a stock item): name + qty + price only — no stock, no ยาฝาก.
+    // ยาอื่นๆ (not a stock item): name + qty + price — no stock, no ยาฝาก (what is left goes home: รับกลับ).
     if (it.other) {
       var otherName = String(it.name || '').trim();
       if (!otherName) throw ValidationError_('กรุณาระบุชื่อยา' + line);
       var oq = requireNumber_(it.qtyDispensed || 0, 'จำนวนซื้อ' + line, { min: 0 });
-      var oo = { other: true, itemId: '', name: otherName, qtyDispensed: oq, qtyUsed: oq, qtyDeposit: 0, expiry: '', unitCost: 0, unitPrice: unitPrice, amount: round2_(oq * unitPrice), priceSource: 'manual', priceRefId: '', tier: null };
+      var ou = 'qtyUsed' in it ? requireNumber_(it.qtyUsed || 0, 'จำนวนที่ใช้' + line, { min: 0 }) : oq;
+      if (ou > oq) throw ValidationError_('จำนวนที่ใช้มากกว่าจำนวนรับเข้า' + line);
+      var oo = { other: true, itemId: '', name: otherName, qtyDispensed: oq, qtyUsed: ou, keep: 'return', qtyDeposit: 0, expiry: '', note: lineNote_(it), unitCost: 0, unitPrice: unitPrice, amount: round2_(oq * unitPrice), priceSource: 'manual', priceRefId: '', tier: null };
       out.items.push(oo);
       out.total += oo.amount;
       return;
@@ -3440,20 +3513,97 @@ function withdrawLines_(record, ctx) {
     if (seen[it.withdrawId]) throw ValidationError_('รายการเบิกยา ' + wd.ItemName + ' ซ้ำ' + line);
     seen[it.withdrawId] = true;
     var o = { withdrawId: wd.WithdrawID, itemId: wd.ItemID, name: wd.ItemName, qtyDispensed: Number(wd.Qty) || 0 };
-    o.note = String(it.note || '').trim().slice(0, 200); // หมายเหตุ of this ยาเบิก line
     return depositSplit_(o, it, line);
   });
 }
 
-/** Sets qtyUsed / qtyDeposit (= dispensed − used, becomes a ยาฝาก lot) / its expiry on line o from client line it. */
+/**
+ * Sets qtyUsed / keep / qtyDeposit / its expiry / note on line o from client line it. What is left
+ * (dispensed − used) is ฝาก (keep 'deposit', the default: it becomes a ยาฝาก lot) or รับกลับ (keep 'return':
+ * the customer takes it home, qtyDeposit 0).
+ */
 function depositSplit_(o, it, line) {
   var qu = requireNumber_(it.qtyUsed || 0, 'จำนวนที่ใช้' + line, { min: 0 });
-  if (qu > o.qtyDispensed) throw ValidationError_('จำนวนที่ใช้มากกว่าจำนวนที่เบิก' + line);
+  if (qu > o.qtyDispensed) throw ValidationError_('จำนวนที่ใช้มากกว่าจำนวนที่รับเข้า' + line);
   o.qtyUsed = qu;
-  o.qtyDeposit = round2_(o.qtyDispensed - qu);
+  o.keep = it.keep === 'return' ? 'return' : 'deposit';
+  o.qtyDeposit = o.keep === 'deposit' ? round2_(o.qtyDispensed - qu) : 0;
   o.expiry = o.qtyDeposit > 0 && it.expiry ? String(it.expiry) : '';
   if (o.expiry) requireDateStr_(o.expiry, 'วันหมดอายุยาฝาก' + line);
+  o.note = lineNote_(it);
   return o;
+}
+
+/** หมายเหตุ typed on a รายการยา line. */
+function lineNote_(it) { return String((it && it.note) || '').trim().slice(0, 200); }
+
+/**
+ * ถือยาเข้า / พัสดุ/messenger เข้าคลินิก lines (no Stock, not charged): a stock-listed ยา (itemId) or one typed as
+ * อื่นๆ; รับเข้า / ใช้, and what is left is ฝาก (a ยาฝาก lot — stock-listed ยา only) or รับกลับ; plus หมายเหตุ.
+ * A client line of the old {name, qty} shape reads as รับเข้า = ใช้ = qty. ctx: {stockById}.
+ */
+function inLines_(items, use, label, ctx) {
+  if (!use || !Array.isArray(items)) return [];
+  return items.filter(function (it) { return it && (it.itemId || String(it.name || '').trim()); }).map(function (it, i) {
+    var line = ' (' + label + ' บรรทัดที่ ' + (i + 1) + ')';
+    var o = { other: !!it.other || !it.itemId, itemId: '', name: String(it.name || '').trim(), loc: '' };
+    if (!o.other) {
+      var st = ctx.stockById[it.itemId];
+      if (!st || stockTypeOf_(st) !== 'medicine') throw ValidationError_('กรุณาเลือกยาจากรายการ หรือเลือก อื่นๆ แล้วพิมพ์ชื่อยา' + line);
+      o.itemId = st.ItemID; o.name = String(st.Name || '').trim(); o.loc = stockLocOf_(st);
+    } else if (!o.name) {
+      throw ValidationError_('กรุณาระบุชื่อยา' + line);
+    }
+    var legacy = !('qtyIn' in it);
+    o.qtyIn = requireNumber_((legacy ? it.qty : it.qtyIn) || 0, 'จำนวนรับเข้า' + line, { min: 0 });
+    o.qtyUsed = legacy ? o.qtyIn : requireNumber_(it.qtyUsed || 0, 'จำนวนที่ใช้' + line, { min: 0 });
+    if (o.qtyUsed > o.qtyIn) throw ValidationError_('จำนวนที่ใช้มากกว่าจำนวนรับเข้า' + line);
+    var left = round2_(o.qtyIn - o.qtyUsed);
+    o.keep = it.keep === 'deposit' && o.itemId ? 'deposit' : 'return';
+    o.qtyDeposit = o.keep === 'deposit' ? left : 0;
+    o.expiry = o.qtyDeposit > 0 && it.expiry ? String(it.expiry) : '';
+    if (o.expiry) requireDateStr_(o.expiry, 'วันหมดอายุยาฝาก' + line);
+    o.note = lineNote_(it);
+    return o;
+  });
+}
+
+/**
+ * รายการยาฝาก -> DepositUseJSON lines: เบิกจากยาฝาก (qtyIn) / ใช้ (qtyUsed); the rest is ฝาก (keep 'deposit':
+ * stays in the deposit, only the used qty comes out) or รับกลับ (keep 'return': the customer takes it home, all
+ * of qtyIn comes out). qty is what comes out of the lots (planDeposits_ reads it). A client line of the old
+ * {itemId, qty} shape reads as เบิก = ใช้ = qty.
+ */
+function depositUseLines_(record) {
+  if (!record.useDepositUse || !Array.isArray(record.depositUseItems)) return [];
+  return record.depositUseItems.filter(function (it) { return it && (it.itemId || String(it.name || '').trim()); }).map(function (it, i) {
+    var line = ' (ยาฝาก บรรทัดที่ ' + (i + 1) + ')';
+    if (!it.itemId) throw ValidationError_('กรุณาเลือกรายการ' + line);
+    var legacy = !('qtyIn' in it);
+    var qin = requireNumber_((legacy ? it.qty : it.qtyIn) || 0, 'จำนวนรับเข้า' + line, { min: 0 });
+    var qu = legacy ? qin : requireNumber_(it.qtyUsed || 0, 'จำนวนที่ใช้' + line, { min: 0 });
+    if (qu > qin) throw ValidationError_('จำนวนที่ใช้มากกว่าจำนวนรับเข้า' + line);
+    var keep = it.keep === 'return' ? 'return' : 'deposit';
+    return { itemId: String(it.itemId), name: String(it.name || '').trim(), qtyIn: qin, qtyUsed: qu, keep: keep, qty: keep === 'deposit' ? qu : qin, note: lineNote_(it) };
+  });
+}
+
+/** OwnMedJSON lines; ones saved before รับเข้า/ใช้/เหลือ ({name, qty}) read as รับเข้า = ใช้ = qty, nothing left. */
+function ownMedItemsOf_(json) {
+  return parseLineItems_(json).map(function (l) {
+    if ('qtyIn' in l) return l;
+    var q = Number(l.qty) || 0;
+    return { other: !l.itemId, itemId: l.itemId || '', name: l.name || '', loc: '', qtyIn: q, qtyUsed: q, keep: 'return', qtyDeposit: 0, expiry: '', note: '' };
+  });
+}
+
+/** DepositUseJSON lines; ones saved before เบิก/ใช้/เหลือ ({itemId, name, qty, lots}) read as เบิก = ใช้ = qty. */
+function depositUseItemsOf_(json) {
+  return parseLineItems_(json).map(function (l) {
+    if ('qtyIn' in l) return l;
+    var q = Number(l.qty) || 0;
+    return Object.assign({}, l, { qtyIn: q, qtyUsed: q, keep: 'deposit', note: '' });
+  });
 }
 
 /** Uncharged quantity lines (ถือยาเข้า / ใช้ยาฝาก / Messenger): blank names dropped, qty validated, only `fields` kept. */
@@ -3490,7 +3640,8 @@ function shipLines_(record, ctx) {
       lineId: old ? old.lineId : ctx.rid + '-S' + (++seq), itemId: st.ItemID, name: String(st.Name || '').trim(), loc: stockLocOf_(st), qty: qty,
       unitCost: same && old.unitCost != null ? Number(old.unitCost) || 0 : Number(st.CostPrice) || 0,
       salePrice: same && old.salePrice != null ? old.salePrice : (pick ? pick.price : null),
-      status: old && old.status === 'billed' ? 'billed' : 'pending', billedAt: old ? old.billedAt || '' : '', billedBy: old ? old.billedBy || '' : ''
+      status: old && old.status === 'billed' ? 'billed' : 'pending', billedAt: old ? old.billedAt || '' : '', billedBy: old ? old.billedBy || '' : '',
+      note: lineNote_(it)
     };
   });
 }
@@ -3501,27 +3652,7 @@ function shipLines_(record, ctx) {
  * ยา only) or รับกลับ. ctx: {stockById}.
  */
 function msgInLines_(record, ctx) {
-  if (!record.useMsgIn || !Array.isArray(record.msgInItems)) return [];
-  return record.msgInItems.filter(function (it) { return it && (it.itemId || String(it.name || '').trim()); }).map(function (it, i) {
-    var line = ' (พัสดุ/messenger บรรทัดที่ ' + (i + 1) + ')';
-    var o = { other: !!it.other, itemId: '', name: String(it.name || '').trim(), loc: '' };
-    if (!o.other) {
-      var st = ctx.stockById[it.itemId];
-      if (!st || stockTypeOf_(st) !== 'medicine') throw ValidationError_('กรุณาเลือกยาจากรายการ หรือเลือก อื่นๆ แล้วพิมพ์ชื่อยา' + line);
-      o.itemId = st.ItemID; o.name = String(st.Name || '').trim(); o.loc = stockLocOf_(st);
-    } else if (!o.name) {
-      throw ValidationError_('กรุณาระบุชื่อยา' + line);
-    }
-    o.qtyIn = requireNumber_(it.qtyIn || 0, 'จำนวนที่รับเข้า' + line, { min: 0 });
-    o.qtyUsed = requireNumber_(it.qtyUsed || 0, 'จำนวนที่ใช้' + line, { min: 0 });
-    if (o.qtyUsed > o.qtyIn) throw ValidationError_('จำนวนที่ใช้มากกว่าจำนวนที่รับเข้า' + line);
-    var left = round2_(o.qtyIn - o.qtyUsed);
-    o.keep = it.keep === 'deposit' && o.itemId ? 'deposit' : 'return';
-    o.qtyDeposit = o.keep === 'deposit' ? left : 0;
-    o.expiry = o.qtyDeposit > 0 && it.expiry ? String(it.expiry) : '';
-    if (o.expiry) requireDateStr_(o.expiry, 'วันหมดอายุยาฝาก' + line);
-    return o;
-  });
+  return inLines_(record.msgInItems, !!record.useMsgIn, 'พัสดุ/messenger', ctx);
 }
 
 /**
@@ -3625,7 +3756,8 @@ function recordDepositSide_(r) {
   var side = { deposits: {}, uses: [] };
   if (!isTrue_(r.StockApplied)) return side;
   (isTrue_(r.UseMedicine) ? parseLineItems_(r.MedicineJSON) : []).concat(parseLineItems_(r.WithdrawJSON))
-    .concat(isTrue_(r.UseMsgIn) ? parseLineItems_(r.MsgInJSON) : []).forEach(function (l) {
+    .concat(isTrue_(r.UseMsgIn) ? parseLineItems_(r.MsgInJSON) : [])
+    .concat(isTrue_(r.UseOwnMed) ? parseLineItems_(r.OwnMedJSON) : []).forEach(function (l) {
     var q = Number(l.qtyDeposit) || 0;
     if (l.itemId && q > 0) { var k = l.itemId + '|' + (l.expiry || ''); side.deposits[k] = round2_((side.deposits[k] || 0) + q); }
   });
@@ -3857,7 +3989,7 @@ function saveRecord(token, record) {
     // sends (now always '' going forward); old records keep their value.
     // วิธีชำระเงิน/สถานะการชำระ are set afterwards by payRecord (ขั้นตอนชำระเงิน).
     // แพทย์ is chosen per หัตถการ/โปร line (one visit may pay several doctors).
-    requireFields_(record, { date: 'วันที่', patientId: 'คนไข้' });
+    requireFields_(record, { date: 'วันที่', patientId: 'คนไข้', salesId: 'เซลล์' });
     requireDateStr_(record.date, 'วันที่');
     // "amount" here is จำนวนเงินหัตถการ — the base procedure price that
     // sales/doctor commission % are computed against: the sum of the
@@ -3870,7 +4002,7 @@ function saveRecord(token, record) {
     var amount = Array.isArray(record.procedureItems)
       ? round2_(procedureItems.reduce(function (s, it, i) { return s + requireNumber_(it.amount || 0, 'จำนวนเงินหัตถการ (บรรทัดที่ ' + (i + 1) + ')', { min: 0 }); }, 0))
       : requireNumber_(record.amount || 0, 'จำนวนเงินหัตถการ', { min: 0 });
-    var canulaAmount = requireNumber_(record.canulaAmount || 0, 'ค่าใช้ Canula', { min: 0 });
+    var canulaGroup = canulaLines_(record), canulaAmount = canulaGroup.total; // Canula lines (ราคา/หน่วย × จำนวน)
     var beforePhotoIds = cleanPhotoIds_(record.beforePhotoIds), afterPhotoIds = cleanPhotoIds_(record.afterPhotoIds);
     // รายการเวชภัณฑ์ที่ใช้ — quantity only (no money); blank-name lines dropped;
     // lines picked from stock (itemId) are deducted via applyStockEffects_.
@@ -3886,8 +4018,7 @@ function saveRecord(token, record) {
     // Round 13 repeatable line-item groups — sums are ALWAYS recomputed
     // server-side from the line arrays (never trust a client-sent aggregate).
     // รายการยา (medicineLines_) needs the sheets, so it is built inside the lock.
-    var ownMedItems = qtyLines_(record.ownMedItems, !!record.useOwnMed, 'ถือยาเข้า', ['other'], false);
-    var depositUseItems = qtyLines_(record.depositUseItems, !!record.useDepositUse, 'ใช้ยาฝาก', ['itemId'], true);
+    var depositUseItems = depositUseLines_(record);
     var messengerItems = qtyLines_(record.messengerItems, !!record.useMessenger, 'พัสดุ', ['note', 'itemId'], true);
     var otherGroup = sumLineItems_(record.otherItems, !!record.useOther, 'จำนวนเงินอื่นๆ');
     var otherAmount = otherGroup.total;
@@ -3986,6 +4117,7 @@ function saveRecord(token, record) {
       var withdrawItems = withdrawLines_(record, { rid: rid, patientId: patient.ID, wdById: wdById });
       var shipItems = shipLines_(record, { rid: rid, stockById: stockById, sales: sales, overridesByItem: stockPriceOverridesByItem_(), oldLines: isNew ? [] : parseLineItems_(existing.ShipJSON) });
       var msgInItems = msgInLines_(record, { stockById: stockById });
+      var ownMedItems = inLines_(record.ownMedItems, !!record.useOwnMed, 'ถือยาเข้า', { stockById: stockById });
       var oralGroup = oralLines_(record, { stockById: stockById, oldLines: isNew ? [] : parseLineItems_(existing.OralJSON) });
 
       var salesPct = sales ? (Number(sales.CommissionRate) || 0) : 0;
@@ -4003,7 +4135,8 @@ function saveRecord(token, record) {
         SalesID: record.salesId || '', SalesName: salesName,
         // Payment fields only change through payRecord.
         PaymentMethod: isNew ? '' : existing.PaymentMethod, SuppliesJSON: JSON.stringify(supplies),
-        UseCanula: record.useCanula ? 'TRUE' : 'FALSE', CanulaAmount: record.useCanula ? canulaAmount : 0,
+        UseCanula: record.useCanula && canulaGroup.items.length ? 'TRUE' : 'FALSE', CanulaAmount: record.useCanula ? canulaAmount : 0,
+        CanulaJSON: JSON.stringify(canulaGroup.items),
         Amount: amount, Status: isNew ? 'unpaid' : (existing.Status || 'unpaid'), ReceiptNo: isNew ? '' : (existing.ReceiptNo || ''),
         Note: record.note || '', CreatedBy: isNew ? session.username : (existing.CreatedBy || session.username),
         CreatedAt: isNew ? nowStr_() : (existing.CreatedAt || nowStr_()), UpdatedAt: nowStr_(),
@@ -4019,7 +4152,8 @@ function saveRecord(token, record) {
         // save; see startResumableUpload's 'opd-photo' kind).
         OpdImageFileId: record.opdImageFileId || '',
         OpdCreatedAt: isNew ? nowStr_() : (existing.OpdCreatedAt || nowStr_()), // saving the ใบ OPD (OPD form) is what creates it
-        CanulaNote: record.useCanula ? String(record.canulaNote || '').trim() : '',
+        // CanulaNote: the lines' หมายเหตุ joined (reports read it; the lines are in CanulaJSON).
+        CanulaNote: canulaGroup.items.map(function (c) { return c.name; }).filter(String).join(', ').slice(0, 500),
         BeforePhotoIds: JSON.stringify(beforePhotoIds), AfterPhotoIds: JSON.stringify(afterPhotoIds),
         MedicineCost: medicineGroup.cost,
         UseSupplies: supplies.length ? 'TRUE' : 'FALSE',
@@ -4234,18 +4368,21 @@ function buildOpdSheetData_(rid) {
   var withLoc = function (l) { var loc = l.loc || (stockById[l.itemId] ? stockLocOf_(stockById[l.itemId]) : ''); return l.name + (loc ? ' [' + stockNameOf(loc) + ']' : ''); };
   // รายการยา by where it came from (ที่มายา), each under its own header; quantities only — no money on the ใบ OPD.
   // ยาเบิก / ยาฝาก / ยาถือเข้า always show (blank lines to write in); ซื้อยาเพิ่ม / พัสดุ only when there are any.
-  var keepNote = function (l) { return 'ใช้ ' + (l.qtyUsed || 0) + (Number(l.qtyDeposit) > 0 ? ' · ฝาก ' + l.qtyDeposit + (l.expiry ? ' (หมดอายุ ' + l.expiry + ')' : '') : '') + (l.note ? ' · ' + l.note : ''); };
+  // ใช้ X · ฝาก / รับกลับ (รับเข้า − ใช้) · หมายเหตุ. A line without keep (saved before รับกลับ existed) was ฝาก.
+  var keepNote = function (l, qtyIn, defKeep) {
+    var left = round2_((Number(qtyIn) || 0) - (Number(l.qtyUsed) || 0)), keep = l.keep || defKeep || 'deposit';
+    return 'ใช้ ' + (l.qtyUsed || 0) + (left > 0 ? (keep === 'deposit' ? ' · ฝาก ' + left + (l.expiry ? ' (หมดอายุ ' + l.expiry + ')' : '') : ' · รับกลับ ' + left) : '') + (l.note ? ' · ' + l.note : '');
+  };
   var medGroups = [
-    { title: 'ยาเบิก (จัดยา-เบิกยา)', always: true, rows: parseLineItems_(r.WithdrawJSON).map(function (l) { return { name: withLoc(l), qty: l.qtyDispensed, note: keepNote(l) }; }) },
-    { title: 'ยาฝาก (ใช้จาก stock ฝาก)', always: true, rows: !isTrue_(r.UseDepositUse) ? [] : parseLineItems_(r.DepositUseJSON).map(function (l) { return { name: withLoc(l), qty: l.qty, note: '' }; }) },
-    { title: 'ยาถือเข้า', always: true, rows: !isTrue_(r.UseOwnMed) ? [] : parseLineItems_(r.OwnMedJSON).map(function (l) { return { name: l.name, qty: l.qty, note: l.other ? 'ยาอื่นๆ' : '' }; }) },
+    { title: 'ยาเบิก (จัดยา-เบิกยา)', always: true, rows: parseLineItems_(r.WithdrawJSON).map(function (l) { return { name: withLoc(l), qty: l.qtyDispensed, note: keepNote(l, l.qtyDispensed) }; }) },
+    { title: 'ยาฝาก (ใช้จาก stock ฝาก)', always: true, rows: !isTrue_(r.UseDepositUse) ? [] : depositUseItemsOf_(r.DepositUseJSON).map(function (l) { return { name: withLoc(l), qty: l.qtyIn, note: keepNote(l, l.qtyIn) }; }) },
+    { title: 'ยาถือเข้า', always: true, rows: !isTrue_(r.UseOwnMed) ? [] : ownMedItemsOf_(r.OwnMedJSON).map(function (l) { return { name: l.other ? l.name : withLoc(l), qty: l.qtyIn, note: (l.other ? 'ยาอื่นๆ · ' : '') + keepNote(l, l.qtyIn, 'return') }; }) },
     { title: 'ซื้อยาเพิ่ม', rows: !isTrue_(r.UseMedicine) ? [] : parseLineItems_(r.MedicineJSON).map(function (l) {
-      return 'qtyDispensed' in l ? { name: withLoc(l), qty: l.qtyDispensed, note: (l.other ? 'ยาอื่นๆ · ' : '') + keepNote(l) } : { name: l.name || 'ยา', qty: '', note: '' };
+      return 'qtyDispensed' in l ? { name: withLoc(l), qty: l.qtyDispensed, note: (l.other ? 'ยาอื่นๆ · ' : '') + keepNote(l, l.qtyDispensed) } : { name: l.name || 'ยา', qty: '', note: '' };
     }) },
-    { title: 'จัดยารอส่ง', rows: !isTrue_(r.UseShip) ? [] : parseLineItems_(r.ShipJSON).map(function (l) { return { name: withLoc(l), qty: l.qty, note: 'ตัดสต๊อกแล้ว · รอคิดเงินเซลล์' }; }) },
+    { title: 'จัดยารอส่ง', rows: !isTrue_(r.UseShip) ? [] : parseLineItems_(r.ShipJSON).map(function (l) { return { name: withLoc(l), qty: l.qty, note: 'ตัดสต๊อกแล้ว · รอคิดเงินเซลล์' + (l.note ? ' · ' + l.note : '') }; }) },
     { title: 'พัสดุ/messenger เข้าคลินิก', rows: !isTrue_(r.UseMsgIn) ? [] : parseLineItems_(r.MsgInJSON).map(function (l) {
-      var left = round2_((Number(l.qtyIn) || 0) - (Number(l.qtyUsed) || 0));
-      return { name: l.other ? l.name : withLoc(l), qty: l.qtyIn, note: 'ใช้ ' + (l.qtyUsed || 0) + (left > 0 ? (l.keep === 'deposit' ? ' · ฝาก ' + left + (l.expiry ? ' (หมดอายุ ' + l.expiry + ')' : '') : ' · รับกลับ ' + left) : '') };
+      return { name: l.other ? l.name : withLoc(l), qty: l.qtyIn, note: keepNote(l, l.qtyIn, 'return') };
     }) },
     { title: 'พัสดุ (ส่ง Messenger)', rows: !isTrue_(r.UseMessenger) ? [] : parseLineItems_(r.MessengerJSON).map(function (l) { return { name: withLoc(l), qty: l.qty, note: l.note || '' }; }) }
   ].filter(function (g) { return g.always || g.rows.length; });
@@ -4256,7 +4393,7 @@ function buildOpdSheetData_(rid) {
   var others = [];
   parseSupplies_(r.SuppliesJSON).forEach(function (s) { others.push({ kind: 'เวชภัณฑ์', name: s.name + ' ×' + s.qty + (s.unit ? ' ' + s.unit : ''), amount: null }); });
   parseLineItems_(r.PromoJSON).forEach(function (p) { others.push({ kind: 'โปรหน้าคลินิก', name: p.name + (doctorById[p.doctorId] ? ' · ' + doctorById[p.doctorId] : ''), amount: Number(p.amount) || 0 }); });
-  if (isTrue_(r.UseCanula)) others.push({ kind: 'Canula', name: 'เข็มทู่' + (r.CanulaNote ? ' · ' + r.CanulaNote : ''), amount: Number(r.CanulaAmount) || 0 });
+  canulaItemsOf_(r).forEach(function (c) { others.push({ kind: 'Canula', name: 'เข็มทู่' + (Number(c.qty) !== 1 ? ' ×' + c.qty : '') + (c.name ? ' · ' + c.name : ''), amount: Number(c.amount) || 0 }); });
   parseLineItems_(r.OtherItemsJSON).forEach(function (o) { others.push({ kind: 'อื่นๆ', name: o.label || 'รายการอื่นๆ', amount: Number(o.amount) || 0 }); });
   parseLineItems_(r.OralJSON).forEach(function (o) { others.push({ kind: 'ยาทาน', name: (o.name || 'ยาทาน') + ' ×' + (Number(o.qty) || 0), amount: Number(o.amount) || 0 }); });
   // ยาฝาก the customer still has (ดึงจาก stock ฝาก), so the front and the doctor see what can be used.
@@ -4291,7 +4428,8 @@ function issueReceipt(token, rid) {
 
 /**
  * ขั้นตอนชำระเงิน — the last step of a treatment record. payload:
- * {status: 'paid'|'unpaid'|'cancelled', paymentMethod}. Moving into or out of
+ * {status: 'paid'|'unpaid'|'cancelled', paymentMethod, payments?: [{method, amount}] (2+ methods adding up to
+ * the bill, e.g. เงินสด 3,000 + โอนเงิน 300)}. Moving into or out of
  * ยกเลิก changes the doctor's daily-minimum group, so that is recomputed.
  */
 function payRecord(token, rid, payload) {
@@ -4300,7 +4438,8 @@ function payRecord(token, rid, payload) {
     payload = payload || {};
     var status = payload.status || 'paid';
     if (['paid', 'unpaid', 'cancelled'].indexOf(status) === -1) throw ValidationError_('สถานะการชำระเงินไม่ถูกต้อง');
-    if (status === 'paid') requireFields_(payload, { paymentMethod: 'วิธีชำระเงิน' });
+    var split = (Array.isArray(payload.payments) ? payload.payments : []).filter(function (p) { return p && p.method; });
+    if (status === 'paid' && split.length < 2) requireFields_(payload, { paymentMethod: 'วิธีชำระเงิน' });
     var lock = LockService.getScriptLock();
     lock.waitLock(30000);
     try {
@@ -4309,6 +4448,25 @@ function payRecord(token, rid, payload) {
       if (!record) throw ValidationError_('ไม่พบข้อมูลการรักษา');
       var oldStatus = record.Status || 'unpaid';
       var updated = Object.assign({}, record, { Status: status, PaymentMethod: payload.paymentMethod || record.PaymentMethod || '', UpdatedAt: nowStr_() });
+      if (status === 'paid' && split.length > 1) {
+        // แบ่งชำระ: each method once, every part > 0, and together exactly the bill.
+        var collected = recordCollected_(record), seen = {};
+        split = split.map(function (p, i) {
+          var m = String(p.method).trim();
+          if (!(PAY_BASIC_.indexOf(m) > -1 || /^ชำระผ่านเซลล์ \(.+\)$/.test(m) || /^อื่นๆ \(.+\)$/.test(m))) throw ValidationError_('วิธีชำระเงินไม่ถูกต้อง: ' + m);
+          if (seen[m]) throw ValidationError_('เลือกวิธีชำระเงินซ้ำ: ' + m);
+          seen[m] = true;
+          var label = 'ยอดชำระ ' + m + ' (บรรทัดที่ ' + (i + 1) + ')', amt = round2_(requireNumber_(p.amount, label));
+          if (!(amt > 0)) throw ValidationError_(label + ' ต้องมากกว่า 0');
+          return { method: m, amount: amt };
+        });
+        var sum = round2_(split.reduce(function (s2, p) { return s2 + p.amount; }, 0));
+        if (Math.round(sum * 100) !== Math.round(collected * 100)) throw ValidationError_('ยอดชำระรวม ' + sum.toLocaleString('en-US') + ' บาท ไม่ตรงกับยอดที่ต้องชำระ ' + collected.toLocaleString('en-US') + ' บาท');
+        updated.PaymentJSON = JSON.stringify(split);
+        updated.PaymentMethod = payLabel_(split);
+      } else if (status === 'paid') {
+        updated.PaymentJSON = ''; // one method: the whole bill
+      }
       // Paid = เสร็จสิ้น; taking a payment back puts it at รอชำระเงิน again.
       if (status === 'paid') updated.VisitStatus = 'completed';
       else if (status === 'unpaid' && String(record.VisitStatus || '') === 'completed') updated.VisitStatus = 'waiting_payment';
@@ -4364,7 +4522,8 @@ function buildReceiptData_(rid) {
     procedureItems: parseLineItems_(r.ProcedureJSON),
     serviceCategory: r.ServiceCategory, detail: r.Detail, doctorName: r.DoctorName, paymentMethod: r.PaymentMethod,
     note: r.Note || '',
-    supplies: supplies, useCanula: useCanula, canulaAmount: canulaAmount, canulaNote: r.CanulaNote || '', otherAmount: otherAmount,
+    supplies: supplies, useCanula: useCanula, canulaAmount: canulaAmount, canulaNote: r.CanulaNote || '', canulaItems: canulaItemsOf_(r), otherAmount: otherAmount,
+    payments: recordPayments_(r, recordCollected_(r)),
     // Round 13 itemized groups — see Records.PromoJSON/MedicineJSON/
     // OtherItemsJSON schema comment. Printed as their own receipt lines
     // alongside the existing supplies/canula lines.
@@ -4795,7 +4954,7 @@ function receiptLines_(r) {
   else if (Number(r.Amount)) out.push({ name: r.Detail ? 'หัตถการ (' + r.Detail + ')' : 'หัตถการ', amount: Number(r.Amount) || 0 });
   parseLineItems_(r.PromoJSON).forEach(function (p) { out.push({ name: 'โปร ' + p.name, amount: Number(p.amount) || 0 }); });
   parseLineItems_(r.MedicineJSON).forEach(function (m) { if (Number(m.amount) > 0) out.push({ name: (m.name || 'ยา') + (m.qtyDispensed ? ' ×' + m.qtyDispensed : ''), amount: Number(m.amount) || 0 }); });
-  if (isTrue_(r.UseCanula) && Number(r.CanulaAmount)) out.push({ name: 'Canula (เข็มทู่)' + (r.CanulaNote ? ' · ' + r.CanulaNote : ''), amount: Number(r.CanulaAmount) || 0 });
+  canulaItemsOf_(r).forEach(function (c) { if (Number(c.amount)) out.push({ name: 'Canula (เข็มทู่)' + (Number(c.qty) !== 1 ? ' ×' + c.qty : '') + (c.name ? ' · ' + c.name : ''), amount: Number(c.amount) || 0 }); });
   var others = parseLineItems_(r.OtherItemsJSON);
   if (others.length) others.forEach(function (o) { out.push({ name: o.label || 'อื่นๆ', amount: Number(o.amount) || 0 }); });
   else if (Number(r.OtherAmount)) out.push({ name: 'รายการอื่นๆ', amount: Number(r.OtherAmount) || 0 });

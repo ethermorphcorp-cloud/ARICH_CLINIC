@@ -111,7 +111,16 @@ if (valid) {
 
   // 3. ใช้ canula (เข็มทู่)
   if (data.useCanula) {
-    items.push({ no: lineNo++, label: 'ใช้ canula (เข็มทู่)' + (data.canulaNote ? ' · ' + data.canulaNote : ''), amount: Number(data.canulaAmount) || 0, sub: false });
+    var canulas = data.canulaItems || [];
+    if (canulas.length > 1) { // several Canula lines: the total, then each line under it
+      items.push({ no: lineNo++, label: 'ใช้ canula (เข็มทู่)', amount: Number(data.canulaAmount) || 0, sub: false });
+      canulas.forEach(function (c, i) {
+        items.push({ no: (i + 1), label: (c.name || 'Canula') + ' × ' + (c.qty || 1) + (c.unitPrice != null && c.unitPrice !== '' ? ' @ ' + moneyR_(c.unitPrice) : ''), amount: Number(c.amount) || 0, sub: true });
+      });
+    } else {
+      var c1 = canulas[0] || {};
+      items.push({ no: lineNo++, label: 'ใช้ canula (เข็มทู่)' + (Number(c1.qty) > 1 ? ' × ' + c1.qty : '') + (c1.name || data.canulaNote ? ' · ' + (c1.name || data.canulaNote) : ''), amount: Number(data.canulaAmount) || 0, sub: false });
+    }
   }
 
   // รายการอื่นๆ (not in the client's list this round — kept, see note above).
