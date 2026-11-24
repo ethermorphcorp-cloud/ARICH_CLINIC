@@ -1814,6 +1814,8 @@ function saveClinicSettings(token, settings) {
     var sheet = getSheet_(CONFIG.SHEETS.CLINIC_SETTINGS);
     var rows = getRows_(sheet);
     settings = settings || {};
+    // เปิด/ปิดคลังยา only through setStockOpen, which also handles the items left in the closing stock.
+    STOCK_LOCS_.forEach(function (l) { delete settings['stockOff' + l]; });
     // ชื่อ Stock A / B (shown instead of "Stock A" / "Stock B" everywhere): short, and not the same name twice.
     ['stockNameA', 'stockNameB'].forEach(function (k) { if (k in settings) settings[k] = String(settings[k] || '').trim().slice(0, 30); });
     var nameA = ('stockNameA' in settings ? settings.stockNameA : (rows.filter(function (r) { return r.Key === 'stockNameA'; })[0] || {}).Value) || 'Stock A';
@@ -1830,6 +1832,140 @@ function saveClinicSettings(token, settings) {
     invalidateMasterCache_();
     writeAudit_(session, 'UPDATE', 'ClinicSettings', '', JSON.stringify(settings));
     return { ok: true };
+  });
+}
+
+/* เปิด/ปิดคลังยา (ตั้งค่าคลินิก > ข้อมูลบริษัท): ClinicSettings stockOffA / stockOffB = 'TRUE' when closed; open otherwise.
+   A closed stock is empty (its items were deleted or moved when it closed) and is left out of every list and picker. */
+var STOCK_LOCS_ = ['A', 'B'];
+/** The ClinicSettings key/value rows as one object. */
+function clinicSettingsMap_() {
+  var ci = {};
+  getRows_(getSheet_(CONFIG.SHEETS.CLINIC_SETTINGS)).forEach(function (r) { ci[r.Key] = r.Value; });
+  return ci;
+}
+/** ['A', 'B'] minus the closed ones. ci: clinicSettingsMap_() when the caller already has it. */
+function openStockLocs_(ci) {
+  ci = ci || clinicSettingsMap_();
+  return STOCK_LOCS_.filter(function (l) { return !isTrue_(ci['stockOff' + l]); });
+}
+function isStockLocOpen_(loc, ci) {
+  return openStockLocs_(ci).indexOf(String(loc || '').toUpperCase() === 'B' ? 'B' : 'A') > -1;
+}
+
+/**
+ * Opens or closes ยา Stock A / B. payload {loc, open, action, targetLoc}.
+ * Closing needs the other stock open, and says what happens to every item still in the closing stock:
+ * - 'delete': the items are removed (like ลบ on each one).
+ * - 'move': the items go to targetLoc. One whose name the target already has adds its quantity there (a StockLog
+ *   รับเข้า on the target item), its ยาฝาก lots follow it, and its row is removed; the others just change stock.
+ */
+function setStockOpen(token, payload) {
+  return safeCall_(function () {
+    var session = requireAuth_(token, 'admin');
+    payload = payload || {};
+    var loc = String(payload.loc || '').toUpperCase();
+    if (STOCK_LOCS_.indexOf(loc) === -1) throw ValidationError_('ไม่พบคลังที่เลือก');
+    var lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+    try {
+      var setSheet = getSheet_(CONFIG.SHEETS.CLINIC_SETTINGS), setRows = getRows_(setSheet), ci = {};
+      setRows.forEach(function (r) { ci[r.Key] = r.Value; });
+      var nameOf = function (l) { return String(ci['stockName' + l] || '').trim() || ('Stock ' + l); };
+      var writeKey = function (key, value) {
+        var ex = setRows.filter(function (r) { return r.Key === key; })[0];
+        if (ex) updateRowByIndex_(setSheet, CONFIG.HEADERS.ClinicSettings, ex._row, { Key: key, Value: value });
+        else appendRow_(setSheet, CONFIG.HEADERS.ClinicSettings, { Key: key, Value: value });
+      };
+      var result = { moved: 0, merged: 0, deleted: 0 };
+      var openNow = openStockLocs_(ci);
+      if (payload.open) {
+        writeKey('stockOff' + loc, 'FALSE');
+      } else {
+        if (openNow.indexOf(loc) === -1) throw ValidationError_(nameOf(loc) + ' ปิดอยู่แล้ว');
+        if (openNow.length < 2) throw ValidationError_('ต้องเปิดคลังยาไว้อย่างน้อย 1 คลัง');
+        var stockSheet = getSheet_(CONFIG.SHEETS.STOCK), all = getRows_(stockSheet);
+        var items = all.filter(function (r) { return stockTypeOf_(r) === 'medicine' && stockLocOf_(r) === loc; });
+        var drop = [];
+        if (items.length && payload.action === 'move') {
+          var target = String(payload.targetLoc || '').toUpperCase();
+          if (target === loc || openNow.indexOf(target) === -1) throw ValidationError_('กรุณาเลือกคลังปลายทางที่เปิดอยู่');
+          var byName = {}, qtyNow = {};
+          all.forEach(function (r) {
+            if (stockTypeOf_(r) !== 'medicine' || stockLocOf_(r) !== target) return;
+            byName[String(r.Name).trim().toLowerCase()] = r;
+            qtyNow[r.ItemID] = Number(r.Qty) || 0;
+          });
+          var depSheet = getSheet_(CONFIG.SHEETS.MED_DEPOSITS), deps = getRows_(depSheet), alias = {};
+          var logSheet = getSheet_(CONFIG.SHEETS.STOCK_LOG), note = 'ย้ายจาก ' + nameOf(loc) + ' (ปิดคลัง)';
+          items.forEach(function (it) {
+            var same = byName[String(it.Name).trim().toLowerCase()];
+            if (!same) {
+              updateRowByIndex_(stockSheet, CONFIG.HEADERS.Stock, it._row, Object.assign({}, it, { StockLoc: target, UpdatedAt: nowStr_() }));
+              result.moved++;
+              return;
+            }
+            var q = Number(it.Qty) || 0;
+            if (q) {
+              qtyNow[same.ItemID] = round2_(qtyNow[same.ItemID] + q);
+              appendRow_(logSheet, CONFIG.HEADERS.StockLog, stockLogRow_(session, 'SL' + nextSeq_('STOCKLOG', 5), todayStr_(), same,
+                q > 0 ? 'in' : 'out', q > 0 ? q : 0, q < 0 ? -q : 0, qtyNow[same.ItemID], note));
+              resyncStockQtyFromLog_(same.ItemID);
+            }
+            deps.filter(function (d) { return d.ItemID === it.ItemID; }).forEach(function (d) {
+              updateRowByIndex_(depSheet, CONFIG.HEADERS.MedDeposits, d._row, Object.assign({}, d, { ItemID: same.ItemID, UpdatedAt: nowStr_() }));
+            });
+            alias[it.ItemID] = same.ItemID;
+            drop.push(it);
+            result.merged++;
+          });
+          repointStockItems_(alias);
+        } else if (items.length && payload.action === 'delete') {
+          drop = items;
+          result.deleted = items.length;
+        } else if (items.length) {
+          throw ValidationError_('กรุณาเลือกว่าจะลบหรือย้ายรายการที่เหลือใน ' + nameOf(loc));
+        }
+        // bottom up, so the row numbers of the rows still to go stay right
+        drop.sort(function (a, b) { return b._row - a._row; }).forEach(function (r) { deleteRowByIndex_(stockSheet, r._row); });
+        writeKey('stockOff' + loc, 'TRUE');
+      }
+      invalidateMasterCache_();
+      invalidateStockLiteCache_();
+      writeAudit_(session, payload.open ? 'OPEN' : 'CLOSE', 'StockLoc', loc,
+        nameOf(loc) + (payload.open ? '' : ' ' + (payload.action || '') + (payload.action === 'move' ? ' → ' + payload.targetLoc : '') + ' ' + JSON.stringify(result)));
+      return { ok: true, data: result };
+    } finally {
+      lock.releaseLock();
+    }
+  });
+}
+
+/**
+ * After items were merged into another item (alias {oldItemID: newItemID}): treatment records, จัดยา-เบิกยา rows and
+ * ใบสั่งซื้อ lines that named an old item now name the one it merged into, so editing them later finds the item and
+ * works out stock against the same id it was cut from. StockLog keeps its history as written. Caller holds the lock.
+ */
+function repointStockItems_(alias) {
+  var olds = Object.keys(alias);
+  if (!olds.length) return;
+  var recSheet = getSheet_(CONFIG.SHEETS.RECORDS), RH = CONFIG.HEADERS.Records;
+  var jsonCols = RH.filter(function (h) { return /JSON$/.test(h); });
+  getRows_(recSheet).forEach(function (r) {
+    var change = {};
+    jsonCols.forEach(function (h) {
+      var s = String(r[h] || ''), t = s;
+      if (s.indexOf('"itemId":"') === -1) return;
+      olds.forEach(function (o) { t = t.split('"itemId":"' + o + '"').join('"itemId":"' + alias[o] + '"'); });
+      if (t !== s) change[h] = t;
+    });
+    if (Object.keys(change).length) updateRowByIndex_(recSheet, RH, r._row, Object.assign({}, r, change));
+  });
+  [[CONFIG.SHEETS.MED_WITHDRAWALS, CONFIG.HEADERS.MedWithdrawals], [CONFIG.SHEETS.ORDER_LINES, CONFIG.HEADERS.OrderLines]].forEach(function (p) {
+    var sh = getSheet_(p[0]);
+    getRows_(sh).forEach(function (r) {
+      if (alias[r.ItemID]) updateRowByIndex_(sh, p[1], r._row, Object.assign({}, r, { ItemID: alias[r.ItemID] }));
+    });
   });
 }
 
@@ -2111,6 +2247,9 @@ function saveStockItem(token, item) {
       });
       STOCK_PRICE_TIERS.forEach(function (t, i) { obj['Price' + t] = optionalNumber_(prices[i], 'ราคาขาย ' + t + ' ชิ้น'); });
       delete obj._row;
+      if (obj.StockType === 'medicine' && (isNew || obj.StockLoc !== stockLocOf_(existing)) && !isStockLocOpen_(obj.StockLoc)) {
+        throw ValidationError_('คลังยานี้ปิดอยู่ — เปิดได้ที่ ตั้งค่าคลินิก > ข้อมูลบริษัท');
+      }
 
       if (isNew) {
         appendRow_(sheet, CONFIG.HEADERS.Stock, obj);
@@ -2293,6 +2432,7 @@ function importStockCsv(token, payload) {
     payload = payload || {};
     var type = cleanStockType_(payload.type);
     var loc = type === 'medicine' ? (String(payload.loc || '').toUpperCase() === 'B' ? 'B' : 'A') : ''; // the Stock A/B tab the file is imported into
+    if (loc && !isStockLocOpen_(loc)) throw ValidationError_('คลังยานี้ปิดอยู่ — เปิดได้ที่ ตั้งค่าคลินิก > ข้อมูลบริษัท');
     var input = Array.isArray(payload.rows) ? payload.rows : [];
     if (!input.length) throw ValidationError_('ไม่พบรายการในไฟล์ CSV');
     var isAdmin = session.level === 'admin';
@@ -3239,7 +3379,8 @@ function medicineLines_(record, ctx) {
     }
     if (!it.itemId || !ctx.stockById[it.itemId] || stockTypeOf_(ctx.stockById[it.itemId]) !== 'medicine') throw ValidationError_('กรุณาเลือกยาจากรายการสต๊อกยา' + line);
     var stockRow = ctx.stockById[it.itemId];
-    if (it.loc && String(it.loc).toUpperCase() !== stockLocOf_(stockRow)) throw ValidationError_('ยาที่เลือกไม่อยู่ใน Stock ' + it.loc + line);
+    // A line saved before its stock closed names the old stock; the item now sits in the stock it was moved to.
+    if (it.loc && String(it.loc).toUpperCase() !== stockLocOf_(stockRow) && isStockLocOpen_(it.loc)) throw ValidationError_('ยาที่เลือกไม่อยู่ใน Stock ' + it.loc + line);
     var old = (ctx.oldLines || []).filter(function (l) { return l.itemId === it.itemId && l.unitCost != null; })[0];
     var o = {
       itemId: it.itemId, name: String(stockRow.Name || it.name || '').trim(), loc: stockLocOf_(stockRow),
@@ -3616,10 +3757,12 @@ function listDeposits(token) {
     requireAuth_(token, 'staff');
     var hnById = {}, unitById = {}, locById = {};
     getRows_(getSheet_(CONFIG.SHEETS.PATIENTS)).forEach(function (p) { hnById[p.ID] = p.HN || ''; });
-    getRows_(getSheet_(CONFIG.SHEETS.STOCK)).forEach(function (s) { unitById[s.ItemID] = s.Unit || ''; locById[s.ItemID] = stockLocOf_(s) || 'A'; });
+    // a lot whose item is gone (deleted, or its stock closed with ลบทั้งหมด) shows under the first open stock
+    var fallbackLoc = openStockLocs_()[0] || 'A';
+    getRows_(getSheet_(CONFIG.SHEETS.STOCK)).forEach(function (s) { unitById[s.ItemID] = s.Unit || ''; locById[s.ItemID] = stockLocOf_(s) || fallbackLoc; });
     var rows = getRows_(getSheet_(CONFIG.SHEETS.MED_DEPOSITS)).filter(function (r) { return (Number(r.QtyRemaining) || 0) > 0; });
     var out = rows.map(function (r) {
-      return Object.assign(mapDepositOut_(r), { patientId: r.PatientID, patientName: r.PatientName, hn: hnById[r.PatientID] || '', unit: unitById[r.ItemID] || '', loc: locById[r.ItemID] || 'A' });
+      return Object.assign(mapDepositOut_(r), { patientId: r.PatientID, patientName: r.PatientName, hn: hnById[r.PatientID] || '', unit: unitById[r.ItemID] || '', loc: locById[r.ItemID] || fallbackLoc });
     });
     out.sort(function (a, b) { return (a.expiry || '9999').localeCompare(b.expiry || '9999') || a.patientName.localeCompare(b.patientName, 'th'); });
     return { ok: true, data: out };
@@ -4504,7 +4647,7 @@ function saveMedWithdrawal(token, payload) {
         var line = ' (บรรทัดที่ ' + (i + 1) + ')';
         var item = stockById[l.itemId];
         if (!item || stockTypeOf_(item) !== 'medicine') throw ValidationError_('กรุณาเลือกยาจากรายการสต๊อกยา' + line);
-        if (l.loc && String(l.loc).toUpperCase() !== stockLocOf_(item)) throw ValidationError_('ยาที่เลือกไม่อยู่ใน Stock ' + l.loc + line);
+        if (l.loc && String(l.loc).toUpperCase() !== stockLocOf_(item) && isStockLocOpen_(l.loc)) throw ValidationError_('ยาที่เลือกไม่อยู่ใน Stock ' + l.loc + line);
         var qty = requireNumber_(l.qty, 'จำนวน' + line, { min: 0 });
         if (!qty) throw ValidationError_('จำนวนต้องมากกว่า 0' + line);
         var cost = Number(item.CostPrice) || 0;
@@ -6628,6 +6771,11 @@ function stockKeyLabels_() {
   return { A: String(ci.stockNameA || '').trim() || 'Stock A', B: String(ci.stockNameB || '').trim() || 'Stock B', supply: 'เวชภัณฑ์', oral: 'ยาทาน' };
 }
 var STOCK_KEY_ORDER_ = ['A', 'B', 'oral', 'supply'];
+/** STOCK_KEY_ORDER_ without the closed ยา stocks — the groups LINE and the stock page show. */
+function stockKeysShown_() {
+  var open = openStockLocs_();
+  return STOCK_KEY_ORDER_.filter(function (k) { return STOCK_LOCS_.indexOf(k) === -1 || open.indexOf(k) > -1; });
+}
 /** Every stock item for the page / LINE: name, category, unit, stock (A / B / supply), qty, min (no cost). */
 function stockViewItems_() {
   return getRows_(getSheet_(CONFIG.SHEETS.STOCK)).map(function (r) {
@@ -6655,6 +6803,7 @@ function renderStockPage_(token, q) {
   tpl.selfUrl = stockBaseUrl_() + '?page=stock&t=' + encodeURIComponent(String(token || '')) + (q ? '&q=' + encodeURIComponent(tpl.q) : '');
   tpl.itemsJson = tpl.valid ? JSON.stringify(stockViewItems_()).replace(/</g, '\\u003c') : '[]';
   tpl.labelsJson = JSON.stringify(stockKeyLabels_()).replace(/</g, '\\u003c');
+  tpl.keysJson = JSON.stringify(stockKeysShown_());
   return tpl.evaluate()
     .setTitle('สต๊อกทั้งหมด | ' + tpl.clinicName)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover')
@@ -6763,7 +6912,7 @@ function buildStockOverviewMessage_(items, clinicName, url) {
     contents: withFooter_({ type: 'bubble', size: 'mega',
       header: lineHeader_('สต๊อกคลีนิคปัจจุบัน', (clinicName || 'ARICH CLINIC') + ' · ' + nowThai_()),
       body: { type: 'box', layout: 'vertical', paddingAll: '16px', spacing: 'md', contents: [
-        { type: 'box', layout: 'horizontal', spacing: 'sm', contents: STOCK_KEY_ORDER_.map(function (t) { return tile(labels[t], count(t), LINE_C_.tint, LINE_C_.head); }) },
+        { type: 'box', layout: 'horizontal', spacing: 'sm', contents: stockKeysShown_().map(function (t) { return tile(labels[t], count(t), LINE_C_.tint, LINE_C_.head); }) },
         { type: 'box', layout: 'horizontal', spacing: 'sm', contents: [tile('ต่ำกว่าขั้นต่ำ', low + ' รายการ', LINE_C_.amberSoft, LINE_C_.amber), tile('หมดแล้ว', out + ' รายการ', LINE_C_.redSoft, LINE_C_.red)] },
         lineText_('ค้นหาเฉพาะรายการ: พิมพ์ "สต๊อก <ชื่อยา>" เช่น สต๊อก โบท็อกซ์', { size: 'xs', color: LINE_C_.muted })
       ] } }, stockLinkFooter_(url, [{ type: 'button', style: 'primary', color: LINE_C_.head, height: 'sm', action: { type: 'message', label: 'ดูรายการใกล้หมด', text: 'เช็ค stock ใกล้หมด' } }]))

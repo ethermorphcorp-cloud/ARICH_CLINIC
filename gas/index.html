@@ -733,7 +733,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   var WRITE_LABELS = { login: 'กำลังเข้าสู่ระบบ...', backupData: 'กำลังสำรองข้อมูล...', seedDemoData: 'กำลังสร้างข้อมูลตัวอย่าง...', importStockCsv: 'กำลังนำเข้าข้อมูล...',
     startResumableUpload: 'กำลังอัปโหลด...', uploadFileChunk: 'กำลังอัปโหลด...', setLogo: 'กำลังอัปโหลด...', setLoginImage: 'กำลังอัปโหลด...', setWithdrawalPhotos: 'กำลังอัปโหลด...',
     sendLineDailySummary: 'กำลังส่ง LINE...', checkLineSetup: 'กำลังตรวจสอบการตั้งค่า LINE...',importPatientsCsv: 'กำลังประมวลผลไฟล์...', importRecordsCsv: 'กำลังประมวลผลไฟล์...', importWithdrawalsCsv: 'กำลังประมวลผลไฟล์...',
-    clearDemoData: 'กำลังลบข้อมูล...', receiveOrder: 'กำลังบันทึกการรับสินค้า...', getReceiptHtml: 'กำลังเตรียมใบเสร็จ...', logout: 'กำลังออกจากระบบ...' };
+    clearDemoData: 'กำลังลบข้อมูล...', setStockOpen: 'กำลังบันทึกคลังยา...', receiveOrder: 'กำลังบันทึกการรับสินค้า...', getReceiptHtml: 'กำลังเตรียมใบเสร็จ...', logout: 'กำลังออกจากระบบ...' };
   function isWriteFn(fn) { return !/^(list|get|search)/.test(fn) || !!WRITE_GETS[fn]; }
   var busyKeys = {}, clickKey = null, armedKey = null, inflightWrites = {};
   function isBusy(key) { return !!busyKeys[key]; }
@@ -956,6 +956,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   /* ---------------------------------------------------------------- */
   var root = document.getElementById('app');
   function render() {
+    leaveClosedStocks();
     var active = document.activeElement;
     var focusInfo = null;
     if (active && active.id && root.contains(active)) {
@@ -1309,7 +1310,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   /** สต๊อก: which stock, three small counts, then each item's คงเหลือ. */
   function mStockTemplate() {
     var L = state.stock.list, isMed = state.stock.type === 'medicine', sum = (L && L.summary) || null;
-    var tabOpts = [{ value: 'supply', label: 'รายการเวชภัณฑ์' }, { value: 'medicine:A', label: 'รายการยา ' + stockName('A') }, { value: 'medicine:B', label: 'รายการยา ' + stockName('B') }, { value: 'oral', label: 'รายการยาทาน' }];
+    var tabOpts = [{ value: 'supply', label: 'รายการเวชภัณฑ์' }].concat(openStockLocs().map(function (l) { return { value: 'medicine:' + l, label: 'รายการยา ' + stockName(l) }; }), [{ value: 'oral', label: 'รายการยาทาน' }]);
     var stat = function (label, n, tone) { return '<div class="card m-stat ' + (tone || '') + '"><div class="lb">' + label + '</div><div class="vl">' + (sum ? esc(n) : '–') + '</div></div>'; };
     var list = !L ? mLoading() : (!L.items.length ? '<div class="card m-empty">ไม่พบรายการ</div>' : '<div class="m-list">' + L.items.map(function (s) {
       var qty = s.latestQtyRemaining != null ? s.latestQtyRemaining : s.qty;
@@ -1462,6 +1463,18 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   function stockName(loc) {
     var ci = (state.master && state.master.clinicInfo) || {};
     return (loc === 'B' ? ci.stockNameB : ci.stockNameA) || ('Stock ' + (loc === 'B' ? 'B' : 'A'));
+  }
+  /** เปิด/ปิดคลังยา (ตั้งค่าคลินิก > ข้อมูลบริษัท): a closed stock is empty and left out of every tab, list and picker. */
+  function stockOpen(loc) {
+    var ci = (state.master && state.master.clinicInfo) || {};
+    return String(ci['stockOff' + (loc === 'B' ? 'B' : 'A')] || '').toUpperCase() !== 'TRUE';
+  }
+  function openStockLocs() { return ['A', 'B'].filter(stockOpen); }
+  /** Where a new ยา line / item starts: the first open stock. */
+  function defaultStockLoc() { return openStockLocs()[0] || 'A'; }
+  /** [{value, label}] of the open ยา stocks, plus `current` when it names a closed one (an old line keeps showing where it was). */
+  function stockLocOpts(current) {
+    return ['A', 'B'].filter(function (l) { return stockOpen(l) || l === current; }).map(function (l) { return { value: l, label: stockName(l) }; });
   }
   /** "name [stock name]" — what pickers show and match for a ยา, since the same name can sit in both stocks. */
   function stockLabelText(s) { return s.loc ? s.name + ' [' + stockName(s.loc) + ']' : s.name; }
@@ -3723,11 +3736,11 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     ownMedItems: function () { return { name: '', qty: 1 }; },
     depositUseItems: function () { return { itemId: '', name: '', qty: 1 }; },
     messengerItems: function () { return { itemId: '', name: '', qty: 1, note: '' }; },
-    shipItems: function () { return { itemId: '', name: '', loc: 'A', qty: 1 }; },
-    msgInItems: function () { return { other: false, itemId: '', name: '', loc: 'A', qtyIn: 1, qtyUsed: 0, keep: 'return', expiry: '' }; },
+    shipItems: function () { return { itemId: '', name: '', loc: defaultStockLoc(), qty: 1 }; },
+    msgInItems: function () { return { other: false, itemId: '', name: '', loc: defaultStockLoc(), qtyIn: 1, qtyUsed: 0, keep: 'return', expiry: '' }; },
     oralItems: function () { return { other: false, itemId: '', name: '', qty: 1, unitPrice: '', amount: 0 }; }
   };
-  function newDispenseLine(other) { return { itemId: '', name: '', loc: other ? '' : 'A', qtyDispensed: 1, qtyUsed: 1, qtyDeposit: 0, unitPrice: '', amount: 0, other: !!other }; }
+  function newDispenseLine(other) { return { itemId: '', name: '', loc: other ? '' : defaultStockLoc(), qtyDispensed: 1, qtyUsed: 1, qtyDeposit: 0, unitPrice: '', amount: 0, other: !!other }; }
   function recordModalBody() {
     var d = state.draft;
     var docOpts = [{ value: '', label: '— แพทย์ —' }].concat((state.master.doctors || []).map(function (x) { return { value: x.id, label: x.name }; }));
@@ -3850,7 +3863,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
           var nameInput = m.other
             ? '<input type="text" placeholder="ชื่อยาอื่นๆ" value="' + esc(m.name) + '" data-bind="' + p + 'name" style="' + inputStyle + '">'
             : '<div style="display:grid;grid-template-columns:fit-content(150px) minmax(0,1fr);gap:6px">' +
-                bindSelect(p + 'loc', [{ value: 'A', label: stockName('A') }, { value: 'B', label: stockName('B') }]) +
+                bindSelect(p + 'loc', stockLocOpts(m.loc)) +
                 '<input type="text" id="medPick' + i + '" data-med-pick="medicine" data-med-loc="' + esc(m.loc || 'A') + '" autocomplete="off" placeholder="เลือกยาจาก ' + esc(stockName(m.loc || 'A')) + '" value="' + esc(m.name) + '" data-bind="' + p + 'name" style="' + inputStyle + '"></div>';
           return dispRow([
             dispCell(nameInput + dispCap('dispNameCap' + i, dyn.dispNameCap)),
@@ -3894,7 +3907,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       return '<div style="display:flex;gap:4px;min-width:0"><input type="text" id="' + group + 'Other' + i + '" placeholder="พิมพ์ชื่อยาเอง (อื่นๆ)" value="' + esc(m.name) + '" data-bind="' + group + '.' + i + '.name" style="' + inputStyle + ';flex:1;min-width:0">' +
         '<button type="button" class="btn" data-action="line-pick-stock" data-arg="' + group + ':' + i + '" title="กลับไปเลือกจากรายการ" style="padding:8px;flex:none"><span class="ms">list</span></button></div>';
     };
-    var stockLocSelect = function (path) { return bindSelect(path, [{ value: 'A', label: stockName('A') }, { value: 'B', label: stockName('B') }]); };
+    var stockLocSelect = function (path) { return bindSelect(path, stockLocOpts(getPath(d, path))); };
     var ownMedRows = d.ownMedItems.map(function (m, i) {
       return gridRow('minmax(0,1fr) 80px 40px', [
         m.other ? otherNameInput('ownMedItems', i, m) :
@@ -4378,7 +4391,17 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   // จัดการสินค้า/บริการ tabs: เวชภัณฑ์, ยา of Stock A and of Stock B (each ยา row
   // belongs to one stock), plus รายการหัตถการ (not stock — see proceduresView).
   function productTabs() {
-    return [{ id: 'supply', label: 'รายการเวชภัณฑ์' }, { id: 'medicine:A', label: 'รายการยา ' + stockName('A') }, { id: 'medicine:B', label: 'รายการยา ' + stockName('B') }, { id: 'oral', label: 'รายการยาทาน' }, { id: 'procedure', label: 'รายการหัตถการ' }, { id: 'summary', label: 'สรุปรายการ stock' }];
+    return [{ id: 'supply', label: 'รายการเวชภัณฑ์' }].concat(openStockLocs().map(function (l) { return { id: 'medicine:' + l, label: 'รายการยา ' + stockName(l) }; }),
+      [{ id: 'oral', label: 'รายการยาทาน' }, { id: 'procedure', label: 'รายการหัตถการ' }, { id: 'summary', label: 'สรุปรายการ stock' }]);
+  }
+  /** Moves the สินค้า and ยาฝาก pages off a ยา stock that has been closed (called before each render). */
+  function leaveClosedStocks() {
+    if (!state.master) return;
+    if (!stockOpen(state.stock.loc)) {
+      state.stock.loc = defaultStockLoc();
+      if (state.stock.type === 'medicine') { state.stock.list = null; state.stock.page = 1; if (state.screen === 'stock') setTimeout(loadStock, 0); }
+    }
+    if (!stockOpen(state.deposits.loc)) { state.deposits.loc = defaultStockLoc(); state.deposits.page = 1; }
   }
   var PRICE_SOURCE_LABELS = { standard: 'Standard', group: 'Sale group', agent: 'Sale Agent' };
   function stockTabId() { return state.stock.type === 'medicine' ? 'medicine:' + state.stock.loc : state.stock.type; }
@@ -4647,7 +4670,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         return '<option value="' + esc(o.value) + '"' + (o.value === value ? ' selected' : '') + '>' + esc(o.label) + '</option>';
       }).join('') + '</select>';
     };
-    var stockOpts = [{ value: '', label: 'ทุก stock' }, { value: 'supply', label: 'เวชภัณฑ์' }, { value: 'A', label: stockName('A') }, { value: 'B', label: stockName('B') }, { value: 'oral', label: 'ยาทาน' }];
+    var stockOpts = [{ value: '', label: 'ทุก stock' }, { value: 'supply', label: 'เวชภัณฑ์' }].concat(stockLocOpts(), [{ value: 'oral', label: 'ยาทาน' }]);
     var catOpts = [{ value: '', label: 'หมวดหมู่ทั้งหมด' }].concat((state.master.stockCategories || []).map(function (c) { return { value: c.name, label: c.name }; }));
     var modeBtn = function (id, text) {
       var on = S.mode === id;
@@ -4872,7 +4895,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         '<div style="font-size:11.5px;color:var(--muted);margin:2px 0 6px">ราคาของ Sale group / Sale agent แก้ได้โดยเลือกกลุ่มหรือเซลล์ที่ตัวกรองด้านบนก่อน แล้วกดแก้ไข</div>' +
         '<div id="stockCostWarn" style="font-size:12px;color:var(--red-dark);margin-bottom:6px">' + belowCostWarning(d) + '</div>';
     }
-    var locOpts = [{ value: 'A', label: stockName('A') }, { value: 'B', label: stockName('B') }];
+    var locOpts = stockLocOpts(d.loc);
     return modalHeader(d.id ? 'แก้ไข' + typeLabel : 'เพิ่ม' + typeLabel + 'ใหม่') +
       '<div style="display:grid;grid-template-columns:' + (d.type === 'medicine' ? '1fr 1fr' : '1fr') + ';gap:0 12px">' +
         field('ประเภทสต๊อก', bindSelect('type', typeOpts)) +
@@ -5240,7 +5263,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   /* ---- สร้างรายการเบิกยา: one patient + sales, several medicine lines ---- */
   function newWithdrawModal() {
     openModal('medwithdraw', { date: todayStr(), patientId: '', patientName: '', phone: '', salesId: '', note: '',
-      lines: [{ loc: 'A', name: '', qty: 1 }], photoIds: [], _patientQuery: '', _patientSuggest: [] });
+      lines: [{ loc: defaultStockLoc(), name: '', qty: 1 }], photoIds: [], _patientQuery: '', _patientSuggest: [] });
   }
 
   /* ---- รูปยาที่เบิก: up to WD_PHOTO_MAX photos per จัดยา-เบิกยา save. In the new-withdrawal
@@ -5330,7 +5353,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     var lines = d.lines.map(function (l, i) {
       return '<div style="display:grid;grid-template-columns:minmax(0,1fr) 100px 40px;gap:8px;align-items:start;margin-bottom:6px">' +
         '<div><div style="display:grid;grid-template-columns:fit-content(240px) minmax(0,1fr);gap:6px">' +
-          bindSelect('lines.' + i + '.loc', [{ value: 'A', label: stockName('A') }, { value: 'B', label: stockName('B') }]) +
+          bindSelect('lines.' + i + '.loc', stockLocOpts(l.loc)) +
           '<input type="text" id="wdMed' + i + '" data-med-pick="medicine" data-med-loc="' + esc(l.loc || 'A') + '" autocomplete="off" placeholder="เลือกยาจาก ' + esc(stockName(l.loc || 'A')) + '" value="' + esc(l.name) + '" data-bind="lines.' + i + '.name" style="' + inputStyle + '"></div>' +
           '<div id="wdCap' + i + '" style="font-size:11px;color:var(--muted);margin-top:3px;min-height:14px">' + withdrawLineCaption(l) + '</div></div>' +
         '<div><input type="number" min="0" step="any" value="' + esc(l.qty) + '" data-bind="lines.' + i + '.qty" style="' + inputStyle + '" placeholder="จำนวน"></div>' +
@@ -5438,7 +5461,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
         '</tr>';
       }).join(''));
     return '' +
-      tabBar([{ id: 'A', label: 'ยาฝาก ' + stockName('A') }, { id: 'B', label: 'ยาฝาก ' + stockName('B') }], state.deposits.loc, 'deposit-loc') +
+      tabBar(openStockLocs().map(function (l) { return { id: l, label: 'ยาฝาก ' + stockName(l) }; }), state.deposits.loc, 'deposit-loc') +
       '<div class="grid-fit" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">' +
         statCard('vaccines', 'รายการยาฝากคงเหลือ', L ? esc(L.length) + ' <span style="font-size:15px;font-weight:500;color:var(--muted)">รายการ</span>' : '<span class="spin"></span>') +
         statCard('schedule', 'ใกล้หมดอายุ', L ? esc(count('soon')) + ' <span style="font-size:15px;font-weight:500;color:var(--muted)">รายการ</span>' : '<span class="spin"></span>') +
@@ -6125,10 +6148,10 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   /** Stock items a PO line of this type can be: ยา for ซื้อยาจากเซลล์, everything else (เวชภัณฑ์...) for ซื้ออื่นๆ. */
   /** Stock a PO line adds to: 'supply' (เวชภัณฑ์), ยา 'A' / 'B' or 'oral' (ยาทาน); ซื้อยาจากเซลล์ only has the ยา stocks. */
   function orderStockOptions(type) {
-    var o = [{ value: 'A', label: stockName('A') }, { value: 'B', label: stockName('B') }];
+    var o = stockLocOpts();
     return type === 'sales' ? o : [{ value: 'supply', label: 'เวชภัณฑ์' }].concat(o, [{ value: 'oral', label: 'ยาทาน' }]);
   }
-  function orderDefaultStock(type) { return type === 'sales' ? 'A' : 'supply'; }
+  function orderDefaultStock(type) { return type === 'sales' ? defaultStockLoc() : 'supply'; }
   /** The line's Stock from its linked item (an edited PO), else the PO type's default. */
   function orderLineStock(type, l) {
     var it = l.itemId ? (state.suggestCache.stock || []).filter(function (x) { return x.id === l.itemId; })[0] : null;
@@ -6850,12 +6873,9 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       (isAdmin() ? '<button class="btn btn-primary" data-action="save-clinic-info">บันทึกข้อมูลบริษัท</button>' : '') +
     '</div>' +
     (isAdmin() ? '<div class="card" style="border:1px solid var(--border);border-radius:var(--r);padding:18px;max-width:520px;margin-top:16px">' +
-      '<div style="font-weight:700;margin-bottom:4px">ชื่อ Stock ยา (Stock A / B)</div>' +
-      '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">ชื่อที่ตั้งจะแสดงแทน "Stock A" / "Stock B" ทุกหน้า เช่น แท็บในหน้าจัดการสินค้า/บริการ, รายการยาฝาก, ช่องเลือกยาใน OPD และใบ OPD (ไม่เกิน 30 ตัวอักษร ห้ามซ้ำกัน)</div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">' +
-        field('ชื่อ Stock A', '<input type="text" id="clinic_stockNameA" maxlength="30" value="' + esc(c.stockNameA || '') + '" placeholder="Stock A" style="' + inputStyle + '">') +
-        field('ชื่อ Stock B', '<input type="text" id="clinic_stockNameB" maxlength="30" value="' + esc(c.stockNameB || '') + '" placeholder="Stock B" style="' + inputStyle + '">') +
-      '</div>' +
+      '<div style="font-weight:700;margin-bottom:4px">คลังยา (Stock A / B)</div>' +
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:12px">ชื่อที่ตั้งจะแสดงแทน "Stock A" / "Stock B" ทุกหน้า เช่น แท็บในหน้าจัดการสินค้า/บริการ, รายการยาฝาก, ช่องเลือกยาใน OPD และใบ OPD (ไม่เกิน 30 ตัวอักษร ห้ามซ้ำกัน) · ปิดคลังที่ไม่ใช้ได้ คลังที่ปิดจะไม่แสดงในทุกหน้า</div>' +
+      '<div style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px">' + ['A', 'B'].map(stockLocSettingHtml).join('') + '</div>' +
       '<button class="btn btn-primary" data-action="save-stock-names">บันทึกชื่อ Stock</button>' +
     '</div>' : '') +
     (isAdmin() ? '<div class="card" style="border:1px solid var(--border);border-radius:var(--r);padding:18px;max-width:520px;margin-top:16px">' +
@@ -6884,6 +6904,84 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       (state.settings.loginImageProgress != null ? '<div class="upload-progress"><i style="width:' + state.settings.loginImageProgress + '%"></i></div>' : '') +
       (settingsData.loginImageUrl ? '<button class="btn" data-action="remove-login-image" style="margin-top:8px"><span class="ms">delete</span> ลบรูปภาพ</button>' : '') +
     '</div>' : '');
+  }
+  /** One คลังยา in the settings card: its name, how many items it holds, and the เปิด/ปิด switch. */
+  function stockLocSettingHtml(loc) {
+    var c = settingsData.clinicInfo || {}, open = String(c['stockOff' + loc] || '').toUpperCase() !== 'TRUE';
+    var count = state.suggestCache.stock ? stockItemsOfType('medicine', loc).length : null;
+    var busy = settingsData.stockBusy === loc;
+    return '<div style="border:1px solid var(--border);border-radius:var(--r-sm);padding:12px 14px;background:' + (open ? 'var(--surface)' : 'var(--hover-bg)') + '">' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">' +
+        '<b style="font-size:13.5px">Stock ' + loc + '</b>' +
+        '<span class="tag-badge" style="' + (open ? 'background:var(--green-soft,var(--hover-bg));color:var(--green-dark)' : 'background:var(--border-soft);color:var(--text-2)') + '">' + (open ? 'เปิดใช้งาน' : 'ปิดอยู่') + '</span>' +
+        (open && count != null ? '<span style="font-size:12px;color:var(--muted)">' + num(count) + ' รายการ</span>' : '') +
+        '<span style="margin-left:auto;display:flex;align-items:center;gap:8px">' + (busy ? '<span class="spin"></span>' : '') +
+          toggleSwitchHtml(loc, open, 'stock-open', open ? 'ปิด ' + stockName(loc) : 'เปิด ' + stockName(loc), busy) + '</span>' +
+      '</div>' +
+      field('ชื่อ Stock ' + loc, '<input type="text" id="clinic_stockName' + loc + '" maxlength="30" value="' + esc(c['stockName' + loc] || '') + '" placeholder="Stock ' + loc + '" style="' + inputStyle + '">') +
+    '</div>';
+  }
+  /** The เปิด/ปิด switch of คลังยา `loc`. Opening is immediate; closing asks what to do with what is still in it. */
+  function toggleStockOpen(loc) {
+    if (settingsData.stockBusy) return;
+    if (!stockOpen(loc)) { setStockOpenCall(loc, { open: true }); return; }
+    var others = openStockLocs().filter(function (l) { return l !== loc; });
+    if (!others.length) {
+      Swal.fire({ icon: 'info', title: 'ปิด ' + stockName(loc) + ' ไม่ได้', text: 'ต้องเปิดคลังยาไว้อย่างน้อย 1 คลัง', confirmButtonText: 'ตกลง' });
+      return;
+    }
+    var ready = state.suggestCache.stock ? Promise.resolve() : refreshStockSuggestCache();
+    ready.then(function () { closeStockDialog(loc, others); });
+  }
+  function closeStockDialog(loc, others) {
+    var items = stockItemsOfType('medicine', loc).slice().sort(function (a, b) { return String(a.name).localeCompare(String(b.name), 'th'); });
+    var row = function (s) {
+      var q = Number(s.qty) || 0;
+      return '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 12px;border-top:1px solid var(--border)">' +
+        '<span style="min-width:0;overflow-wrap:anywhere">' + esc(s.name) + '</span>' +
+        '<b style="flex:none;color:' + (q <= 0 ? 'var(--red-dark)' : 'var(--text)') + '">' + num(q) + (s.unit ? ' <span style="font-weight:400;color:var(--muted)">' + esc(s.unit) + '</span>' : '') + '</b></div>';
+    };
+    var radio = function (value, label) {
+      return '<label style="display:flex;align-items:flex-start;gap:8px;padding:8px 2px;cursor:pointer"><input type="radio" name="closeStockAction" id="closeStock_' + value + '" value="' + value + '" style="margin-top:4px">' + label + '</label>';
+    };
+    var html = items.length
+      ? '<div style="text-align:left">' +
+          '<div>รายการที่ยังอยู่ใน <b>' + esc(stockName(loc)) + '</b> (' + num(items.length) + ' รายการ)</div>' +
+          '<div style="max-height:200px;overflow:auto;border:1px solid var(--border);border-top:none;border-radius:10px;margin:8px 0 12px">' + items.map(row).join('') + '</div>' +
+          '<div style="font-weight:600;color:var(--text)">จะทำอะไรกับรายการเหล่านี้</div>' +
+          radio('delete', '<span>ลบทั้งหมด<br><span style="font-size:12px;color:var(--muted)">ลบรายการยาทั้งหมดในคลังนี้ กู้คืนไม่ได้</span></span>') +
+          radio('move', '<span style="flex:1;min-width:0">ย้ายไปคลัง <select id="closeStockTarget" onchange="document.getElementById(\'closeStock_move\').checked=true" style="' + inputStyle + ';display:inline-block;width:auto;padding:4px 8px;margin-left:4px">' +
+            others.map(function (l) { return '<option value="' + l + '">' + esc(stockName(l)) + '</option>'; }).join('') + '</select>' +
+            '<br><span style="font-size:12px;color:var(--muted)">ยาที่ชื่อซ้ำกับคลังปลายทางจะรวมจำนวนเข้าด้วยกัน ยาฝากของคนไข้ย้ายตามไปด้วย</span></span>') +
+        '</div>'
+      : 'ไม่มีรายการยาในคลังนี้ ปิดได้ทันที';
+    Swal.fire({
+      icon: 'warning', title: 'ปิด ' + stockName(loc) + '?', html: html, width: 540,
+      showCancelButton: true, confirmButtonText: 'ยืนยัน', cancelButtonText: 'ยกเลิก', focusCancel: true,
+      didOpen: function (el) { el.addEventListener('change', function () { Swal.resetValidationMessage(); }); },
+      preConfirm: function () {
+        if (!items.length) return {};
+        var picked = document.querySelector('input[name="closeStockAction"]:checked');
+        if (!picked) { Swal.showValidationMessage('กรุณาเลือก ลบทั้งหมด หรือ ย้ายไปคลังอื่น'); return false; }
+        return { action: picked.value, targetLoc: picked.value === 'move' ? document.getElementById('closeStockTarget').value : '' };
+      }
+    }).then(function (r) { if (r.isConfirmed) setStockOpenCall(loc, Object.assign({ open: false }, r.value)); });
+  }
+  function setStockOpenCall(loc, opts) {
+    var name = stockName(loc);
+    settingsData.stockBusy = loc; render();
+    call('setStockOpen', session.token, Object.assign({ loc: loc }, opts)).then(function (res) {
+      settingsData.stockBusy = null;
+      var key = {}; key['stockOff' + loc] = opts.open ? 'FALSE' : 'TRUE';
+      settingsData.clinicInfo = Object.assign({}, settingsData.clinicInfo, key);
+      if (state.master) state.master.clinicInfo = Object.assign({}, state.master.clinicInfo, key);
+      var d = res.data || {};
+      toast('success', opts.open ? 'เปิด ' + name + ' แล้ว'
+        : 'ปิด ' + name + ' แล้ว' + (d.deleted ? ' · ลบ ' + num(d.deleted) + ' รายการ' : '') + (d.moved || d.merged ? ' · ย้าย ' + num(d.moved + d.merged) + ' รายการ' : ''));
+      state.stock.list = null; state.deposits.list = null;
+      render(); refreshMaster();
+      refreshStockSuggestCache().then(render);
+    }, function () { settingsData.stockBusy = null; render(); });
   }
   /** Saves the two stock names; the picker labels and the stock tabs follow at once. */
   function saveStockNames() {
@@ -7286,6 +7384,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       case 'remove-opd-photo': removeOpdPhoto(); break;
       case 'new-stock': newStockModal(); break;
       case 'save-stock-names': saveStockNames(); break;
+      case 'stock-open': toggleStockOpen(arg); break;
       case 'dd-stock-menu': {
         var stockLbl = stockPageLabel();
         openPortal('ddStockMenu', [

@@ -79,7 +79,7 @@ body{margin:0;font-family:'Noto Sans Thai',system-ui,sans-serif;color:var(--text
   function state(x) { return x.qty <= 0 ? 'out' : (x.min != null && x.qty < x.min ? 'warn' : 'ok'); }
   var ORDER = { out: 0, warn: 1, ok: 2 };
   document.getElementById('chips').innerHTML = '<button class="chip on" data-t="">ทั้งหมด</button>' +
-    ['A', 'B', 'oral', 'supply'].map(function (k) { return '<button class="chip" data-t="' + k + '">' + esc(T[k]) + '</button>'; }).join('');
+    <?!= keysJson ?>.map(function (k) { return '<button class="chip" data-t="' + k + '">' + esc(T[k]) + '</button>'; }).join('');
   function render() {
     var q = st.q.trim().toLowerCase();
     var base = ITEMS.filter(function (x) { return !st.t || x.type === st.t; });
