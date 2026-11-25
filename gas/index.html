@@ -5870,6 +5870,11 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
           var on = (rp.view || 'all') === o[0];
           return '<button data-action="report-view" data-arg="' + o[0] + '" style="border:none;padding:9px 14px;font:inherit;font-size:13px;cursor:pointer;' + (on ? 'background:var(--accent);color:#fff;font-weight:600' : 'background:var(--surface);color:var(--text-2)') + '">' + o[1] + '</button>';
         }).join('') + '</div></div>' : '') +
+      (rp.tab === 'sales' && isAdmin() ? '<div>' + lbl('ราคาทุน') + '<div style="display:flex;border:1px solid var(--input-border);border-radius:9px;overflow:hidden">' +
+        [['show', 'แสดง', 'visibility'], ['hide', 'ซ่อน', 'visibility_off']].map(function (o) {
+          var on = (rp.costHidden ? 'hide' : 'show') === o[0];
+          return '<button data-action="report-cost" data-arg="' + o[0] + '" title="' + (o[0] === 'hide' ? 'ซ่อนคอลัมน์ ราคาทุน/หน่วย และ จำนวนเงิน (ทุน)' : 'แสดงคอลัมน์ราคาทุน') + '" style="border:none;padding:9px 12px;font:inherit;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:4px;' + (on ? 'background:var(--accent);color:#fff;font-weight:600' : 'background:var(--surface);color:var(--text-2)') + '"><span class="ms" style="font-size:16px">' + o[2] + '</span>' + o[1] + '</button>';
+        }).join('') + '</div></div>' : '') +
       '<button class="btn btn-primary" data-action="run-report"' + (rp.loading ? ' disabled' : '') + '>' + (rp.loading ? '<span class="spin"></span>' : '<span class="ms">assessment</span>') + ' ดูรายงาน</button>' +
       (D && rp.tab === 'sales' && D.rows.length ? '<button class="btn" data-action="report-csv"><span class="ms">download</span> ดาวน์โหลด CSV</button>' : '') +
       (D && reportPdfRows(rp.tab, D).length ?'<button class="btn" data-action="report-pdf"><span class="ms">picture_as_pdf</span> ดาวน์โหลด PDF</button>' : '') +
@@ -6075,7 +6080,9 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
    */
   function salesReportGroupShown() { return isAdmin() && state.report.view !== 'sales'; } // staff: Report เซลล์ only
   /** ราคาทุน columns: admin only (the server sends staff no cost at all). */
-  function reportShowsCost() { return isAdmin(); }
+  /** ราคาทุน columns: admin only (the server sends staff no cost at all), and an admin can hide them (ราคาทุน: ซ่อน) —
+   *  on screen, in the สรุป cards, the PDF and the CSV alike. */
+  function reportShowsCost() { return isAdmin() && !state.report.costHidden; }
   function salesReportTable(D) {
     var rp = state.report, blocks = salesPivotBlocks(D.rows), pg = localPage(blocks, rp.page);
     var shown = salesReportGroupShown(), open = shown && !rp.groupCollapsed;
@@ -6296,7 +6303,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       // Report เซลล์ ends on what the เซลล์ pays the clinic (ราคาทุน); Report รวม on ส่วนต่างสุทธิ.
       totals = showG
         ? ((D.bySales || []).length > 1 ? D.bySales.map(function (b) { return ['ส่วนต่าง ' + b.salesName, b.margin]; }) : [])
-          .concat([['ยอดรวมราคาทุน (บาท)', D.totalCost], ['ยอดรวมราคาขายเซลล์ (บาท)', D.totalSale]])
+          .concat(reportShowsCost() ? [['ยอดรวมราคาทุน (บาท)', D.totalCost]] : []).concat([['ยอดรวมราคาขายเซลล์ (บาท)', D.totalSale]])
           .concat(D.totalCustomer ? [['ยอดรวมราคาลูกค้าจ่าย (บาท)', D.totalCustomer], ['ส่วนต่างคืนเซลล์ (บาท)', D.totalRefund]] : [])
           .concat([['ส่วนต่างสุทธิ (บาท)', D.totalMargin]])
         // staff (no ราคาทุน): ราคาขายเซลล์ and what goes back to the เซลล์
@@ -7954,6 +7961,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       case 'withdraw-to-record': withdrawToRecord(arg); break;
       case 'report-tab': reportTab(arg); break;
       case 'report-view': state.report.view = arg === 'sales' ? 'sales' : 'all'; render(); break;
+      case 'report-cost': state.report.costHidden = arg === 'hide'; render(); break;
       case 'report-group-toggle': state.report.groupCollapsed = !state.report.groupCollapsed; render(); break;
       case 'run-report': runReport(); break;
       case 'ship-status': (function () { var sp = String(arg).split('|'); setShipLinesStatus([{ rid: sp[0], lineId: sp[1] }], sp[2]); })(); break;
