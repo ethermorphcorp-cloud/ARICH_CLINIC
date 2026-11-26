@@ -3965,6 +3965,44 @@ function listDeposits(token) {
  * บันทึกการรักษา (−, from the lots its DepositUseJSON names) and, if the
  * balance was corrected by an admin, a ปรับยอด line for the difference.
  */
+/**
+ * Every given lot's movement, oldest first, with the running balance:
+ * {lotId: {moves:[{date, kind:'deposit'|'use'|'adjust', label, recordId, userId, userName, delta, balance}], deposited, used}}.
+ * ฝากยา (+QtyDeposited), each use by a บันทึกการรักษา (− the qty its DepositUseJSON took from the lot, made by
+ * that record's patient — the owner or, for ใช้ยาฝากคนอื่น, someone else), and a ปรับยอด line for an admin's correction.
+ */
+function depositMovesByLot_(lots, records) {
+  var byId = {};
+  lots.forEach(function (lot) { byId[lot.DepositID] = { lot: lot, moves: [], used: 0 }; });
+  records.forEach(function (r) {
+    parseLineItems_(r.DepositUseJSON).forEach(function (u) {
+      (u.lots || []).forEach(function (p) {
+        var e = byId[p.depositId], q = Number(p.qty) || 0;
+        if (!e || !q) return;
+        e.used = round2_(e.used + q);
+        var other = r.PatientID && r.PatientID !== e.lot.PatientID;
+        e.moves.push({ date: dateStr_(r.Date), sort: '1' + String(r.CreatedAt), kind: 'use', label: other ? 'ใช้ยาฝาก (โดย ' + r.PatientName + ')' : 'ใช้ยาฝาก',
+          recordId: r.RID, userId: r.PatientID || '', userName: r.PatientName || '', delta: -q });
+      });
+    });
+  });
+  var out = {};
+  Object.keys(byId).forEach(function (id) {
+    var e = byId[id], lot = e.lot, moves = e.moves, used = e.used;
+    var remaining = Number(lot.QtyRemaining) || 0;
+    var deposited = numOrNull_(lot.QtyDeposited);
+    if (deposited == null) deposited = round2_(remaining + used); // lot from before QtyDeposited was kept
+    moves.push({ date: dateStr_(lot.Date), sort: '0', kind: 'deposit', label: 'ฝากยา', recordId: lot.RecordID || '', userId: '', userName: '', delta: deposited });
+    var adjust = round2_(remaining - (deposited - used));
+    if (adjust) moves.push({ date: dateStr_(lot.UpdatedAt) || dateStr_(lot.Date), sort: '2', kind: 'adjust', label: 'ปรับยอดโดยผู้ดูแล', recordId: '', userId: '', userName: '', delta: adjust });
+    moves.sort(function (a, b) { return a.date.localeCompare(b.date) || a.sort.localeCompare(b.sort); });
+    var bal = 0;
+    moves.forEach(function (m) { bal = round2_(bal + m.delta); m.balance = bal; delete m.sort; });
+    out[id] = { moves: moves, deposited: deposited, used: used };
+  });
+  return out;
+}
+
 function getDepositMovements(token, id) {
   return safeCall_(function () {
     requireAuth_(token, 'staff');
@@ -3972,29 +4010,47 @@ function getDepositMovements(token, id) {
     if (!lot) throw ValidationError_('ไม่พบรายการยาฝาก');
     var patient = getRows_(getSheet_(CONFIG.SHEETS.PATIENTS)).filter(function (p) { return p.ID === lot.PatientID; })[0];
     var stockRow = getRows_(getSheet_(CONFIG.SHEETS.STOCK)).filter(function (s) { return s.ItemID === lot.ItemID; })[0];
-    var moves = [], used = 0;
-    getRows_(getSheet_(CONFIG.SHEETS.RECORDS)).forEach(function (r) {
-      parseLineItems_(r.DepositUseJSON).forEach(function (u) {
-        (u.lots || []).forEach(function (p) {
-          var q = Number(p.qty) || 0;
-          if (p.depositId === id && q) { used = round2_(used + q); moves.push({ date: dateStr_(r.Date), sort: '1' + String(r.CreatedAt), label: r.PatientID && r.PatientID !== lot.PatientID ? 'ใช้ยาฝาก (โดย ' + r.PatientName + ')' : 'ใช้ยาฝาก', recordId: r.RID, delta: -q }); }
-        });
-      });
-    });
-    var remaining = Number(lot.QtyRemaining) || 0;
-    var deposited = numOrNull_(lot.QtyDeposited);
-    if (deposited == null) deposited = round2_(remaining + used); // lot from before QtyDeposited was kept
-    moves.push({ date: dateStr_(lot.Date), sort: '0', label: 'ฝากยา', recordId: lot.RecordID || '', delta: deposited });
-    var adjust = round2_(remaining - (deposited - used));
-    if (adjust) moves.push({ date: dateStr_(lot.UpdatedAt) || dateStr_(lot.Date), sort: '2', label: 'ปรับยอดโดยผู้ดูแล', recordId: '', delta: adjust });
-    moves.sort(function (a, b) { return a.date.localeCompare(b.date) || a.sort.localeCompare(b.sort); });
-    var bal = 0;
-    moves.forEach(function (m) { bal = round2_(bal + m.delta); m.balance = bal; delete m.sort; });
+    var m = depositMovesByLot_([lot], getRows_(getSheet_(CONFIG.SHEETS.RECORDS)))[id];
+    var moves = m.moves.map(function (x) { return { date: x.date, label: x.label, recordId: x.recordId, delta: x.delta, balance: x.balance }; });
     var summary = Object.assign(mapDepositOut_(lot), {
       patientId: lot.PatientID, patientName: lot.PatientName, hn: patient ? (patient.HN || '') : '', unit: stockRow ? (stockRow.Unit || '') : '',
-      deposited: deposited, used: used
+      deposited: m.deposited, used: m.used
     });
     return { ok: true, data: { lot: summary, movements: moves } };
+  });
+}
+
+/**
+ * รายงานการใช้ยาฝาก: every ยาฝาก movement (ฝาก / ใช้ / ปรับยอด) dated within {dateFrom, dateTo}, across all lots
+ * (used-up ones too), newest first: {date, kind, itemId, itemName, unit, ownerId, ownerName, ownerHn, userName,
+ * delta (+ ฝาก, − ใช้), balance (the lot's balance after this line), recordId, depositId}.
+ */
+function getDepositUsageReport(token, opts) {
+  return safeCall_(function () {
+    requireAuth_(token, 'staff');
+    opts = opts || {};
+    var from = opts.dateFrom || (todayStr_().substring(0, 8) + '01'), to = opts.dateTo || todayStr_();
+    if (from > to) throw ValidationError_('วันที่เริ่มต้นต้องไม่เกินวันที่สิ้นสุด');
+    var hnById = {}, unitById = {};
+    getRows_(getSheet_(CONFIG.SHEETS.PATIENTS)).forEach(function (p) { hnById[p.ID] = p.HN || ''; });
+    getRows_(getSheet_(CONFIG.SHEETS.STOCK)).forEach(function (s) { unitById[s.ItemID] = s.Unit || ''; });
+    var lots = getRows_(getSheet_(CONFIG.SHEETS.MED_DEPOSITS)).filter(function (l) { return l.DepositID; });
+    var lotById = {};
+    lots.forEach(function (l) { lotById[l.DepositID] = l; });
+    var all = depositMovesByLot_(lots, getRows_(getSheet_(CONFIG.SHEETS.RECORDS)));
+    var rows = [];
+    Object.keys(all).forEach(function (id) {
+      var lot = lotById[id];
+      all[id].moves.forEach(function (m, i) {
+        if (m.date < from || m.date > to) return;
+        rows.push({ date: m.date, seq: i, kind: m.kind, itemId: lot.ItemID || '', itemName: lot.ItemName || '', unit: unitById[lot.ItemID] || '',
+          ownerId: lot.PatientID || '', ownerName: lot.PatientName || '', ownerHn: hnById[lot.PatientID] || '',
+          userName: m.kind === 'use' ? m.userName : '', delta: m.delta, balance: m.balance, recordId: m.recordId || '', depositId: id });
+      });
+    });
+    rows.sort(function (a, b) { return b.date.localeCompare(a.date) || a.depositId.localeCompare(b.depositId) || b.seq - a.seq; });
+    rows.forEach(function (r) { delete r.seq; });
+    return { ok: true, data: { from: from, to: to, rows: rows } };
   });
 }
 

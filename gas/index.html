@@ -933,7 +933,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     // `procedures` is the รายการหัตถการ tab's full list (filtered/paged client-side).
     stock: { type: 'supply', loc: 'A', priceGroup: '', priceSalesId: '', list: null, page: 1, q: '', category: '', searchSuggest: [], reloading: false, panel: null, procedures: null, procQ: '', procPage: 1,
       sum: { stock: '', category: '', q: '', from: '', to: '', mode: 'remaining', data: null, loading: false, page: 1 }, movePanel: null },
-    deposits: { list: null, q: '', filter: '', page: 1, panel: null },
+    deposits: { tab: 'list', usage: { from: todayStr().slice(0, 8) + '01', to: todayStr(), data: null, loading: false, q: '', kind: '', page: 1 }, list: null, q: '', filter: '', page: 1, panel: null },
     // Round 19 item 2: `reloading`/`orderReloading` drive a dim-in-place
     // transition on the table (instead of a hard content-swap with zero
     // feedback in between) while a dropdown-filter-triggered reload is in
@@ -1110,6 +1110,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     stockSum: { holder: function () { return state.stock.sum; }, field: 'page', draw: function () { render(); } },
     report: { holder: function () { return state.report; }, field: 'page', draw: function () { render(); } },
     deposits: { holder: function () { return state.deposits; }, field: 'page', draw: function () { render(); } },
+    depUsage: { holder: function () { return state.deposits.usage; }, field: 'page', draw: function () { render(); } },
     procedures: { holder: function () { return state.stock; }, field: 'procPage', draw: function () { render(); } },
     promotions: { holder: function () { return state.promotions; }, field: 'page', draw: function () { render(); } },
     staff: { holder: function () { return state.settings; }, field: 'staffPage', draw: function () { render(); } }
@@ -1511,7 +1512,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     else if (s === 'stock') { if (state.stock.type === 'procedure') loadProcedures(); else if (state.stock.type === 'summary') loadStockSummary(); else if (state.stock.type === 'deposit') loadDeposits(); else loadStock(); }
     else if (s === 'withdraw') loadWithdrawals();
     else if (s === 'board') loadBoard();
-    else if (s === 'deposits') loadDeposits();
+    else if (s === 'deposits') { loadDeposits(); if (state.deposits.tab === 'usage') loadDepositUsage(); }
     else if (s === 'reports') { if (state.report.data) runReport(); }
     else if (s === 'expense') { if (state.expense.tab === 'expense') loadExpenses(); else loadOrders(); }
     else if (s === 'pcheck') loadPurchaseChecks();
@@ -1568,7 +1569,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     if (screenId === 'withdraw') loadWithdrawals();
     if (screenId === 'board') { loadBoard(); clearQueueAlerts(); pollQueueAlerts(); }
     else pollQueueAlerts(); // look for newly รอชำระเงิน customers whenever the screen changes
-    if (screenId === 'deposits') loadDeposits(); // always fresh: records/withdrawals elsewhere change it
+    if (screenId === 'deposits') { loadDeposits(); if (state.deposits.tab === 'usage') loadDepositUsage(); } // always fresh: records/withdrawals elsewhere change it
     if (screenId === 'expense' && !state.expense.list) loadExpenses();
     if (screenId === 'pcheck') loadPurchaseChecks();
     if (screenId === 'promotions' && !state.promotions.list) loadPromotions();
@@ -5691,6 +5692,14 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
     { id: 'expired', label: 'หมดอายุแล้ว' }, { id: 'none', label: 'ไม่ระบุวันหมดอายุ' }
   ];
   function depositsTemplate() {
+    if (state.screen === 'deposits') {
+      var tabs = tabBar([{ id: 'list', label: 'ยาฝากคงเหลือ' }, { id: 'usage', label: 'รายงานการใช้ยาฝาก' }], state.deposits.tab || 'list', 'deposit-tab');
+      if (state.deposits.tab === 'usage') return tabs + depositUsageView();
+      return tabs + depositListView();
+    }
+    return depositListView();
+  }
+  function depositListView() {
     // Stock ยาฝาก: every patient's ยาฝาก in one list, kept apart from Stock A / B.
     var L = state.deposits.list;
     var q = (state.deposits.q || '').trim().toLowerCase(), f = state.deposits.filter;
@@ -5736,6 +5745,69 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
           '<th style="' + th + ';text-align:right">จำนวนคงเหลือ</th><th style="' + th + '">วันหมดอายุ</th><th style="' + th + '">บันทึกการรักษา</th><th></th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>', false) + localPagerHtml(pg, 'deposits') +
       '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">ยาฝากเกิดจากจำนวนที่เบิกแต่ไม่ได้ใช้ในบันทึกการรักษา · การใช้ยาฝากจะตัดจากรายการที่หมดอายุก่อน (ไม่ตัดรายการที่หมดอายุแล้ว)</div>';
+  }
+  /* ---- รายงานการใช้ยาฝาก: every ฝาก / ใช้ / ปรับยอด line in a date range (getDepositUsageReport) ---- */
+  function loadDepositUsage() {
+    var u = state.deposits.usage;
+    var f = document.getElementById('depUseFrom'), t = document.getElementById('depUseTo');
+    if (f) u.from = f.value; if (t) u.to = t.value;
+    if (u.from && u.to && u.from > u.to) { toast('error', 'วันที่เริ่มต้นต้องไม่เกินวันที่สิ้นสุด'); return; }
+    u.loading = true; render();
+    call('getDepositUsageReport', session.token, { dateFrom: u.from, dateTo: u.to }).then(function (res) {
+      u.data = res.data; u.loading = false; u.page = 1; render();
+    }, function () { u.loading = false; render(); });
+  }
+  var onDepositUsageSearch = debounce(function (q) { state.deposits.usage.q = q; state.deposits.usage.page = 1; render(); }, 150);
+  var DEPOSIT_USAGE_KINDS = [{ id: '', label: 'ทั้งหมด' }, { id: 'deposit', label: 'ฝาก' }, { id: 'use', label: 'ใช้' }, { id: 'adjust', label: 'ปรับยอด' }];
+  function depositUsageView() {
+    var u = state.deposits.usage, D = u.data;
+    var q = (u.q || '').trim().toLowerCase();
+    var rows = !D ? null : D.rows.filter(function (r) {
+      if (u.kind && r.kind !== u.kind) return false;
+      return !q || [r.itemName, r.ownerName, r.ownerHn, r.userName, r.recordId].join(' ').toLowerCase().indexOf(q) > -1;
+    });
+    var pg = localPage(rows || [], u.page);
+    var th = 'padding:10px 12px;white-space:nowrap', dash = '<span style="color:var(--muted)">-</span>';
+    var qtyCell = function (r) {
+      var unit = r.unit ? ' ' + esc(r.unit) : '', n = Math.abs(Number(r.delta) || 0);
+      var tag = r.kind === 'deposit' ? ['ฝาก', '+', 'var(--green-soft)', 'var(--green-dark)'] : r.kind === 'use' ? ['ใช้', '−', 'var(--red-soft)', 'var(--red-dark)']
+        : ['ปรับยอด', r.delta < 0 ? '−' : '+', 'var(--amber-soft)', 'var(--amber-dark)'];
+      return '<span class="tag-badge" style="background:' + tag[2] + ';color:' + tag[3] + ';white-space:nowrap">' + tag[0] + ' ' + tag[1] + esc(n) + unit + '</span>';
+    };
+    var body = !rows ? (u.loading ? skelRows(7) : '<tr><td colspan="7" class="empty-state">เลือกช่วงวันที่ แล้วกด "ดูรายงาน"</td></tr>') :
+      (!rows.length ? '<tr><td colspan="7" class="empty-state">' + (q || u.kind ? 'ไม่พบรายการที่ค้นหา' : 'ไม่มีการฝาก / ใช้ยาฝากในช่วงที่เลือก') + '</td></tr>' :
+      pg.items.map(function (r) {
+        var other = r.kind === 'use' && r.userName && r.userName !== r.ownerName;
+        return '<tr data-action="view-deposit" data-arg="' + esc(r.depositId) + '" style="cursor:pointer" title="คลิกเพื่อดูความเคลื่อนไหวของยาฝากรายการนี้">' +
+          '<td style="padding:10px 12px;white-space:nowrap">' + esc(r.date) + '</td>' +
+          '<td>' + esc(r.itemName) + '</td>' +
+          '<td>' + esc(r.ownerName) + (r.ownerHn ? '<div style="font-size:11px;color:var(--muted)">HN ' + esc(r.ownerHn) + '</div>' : '') + '</td>' +
+          '<td>' + (r.kind === 'use' ? esc(r.userName || '-') + (other ? ' <span class="tag-badge" style="background:var(--accent-soft);color:var(--accent);font-size:10.5px">ใช้ยาฝากคนอื่น</span>' : '') : dash) + '</td>' +
+          '<td style="white-space:nowrap">' + qtyCell(r) + '</td>' +
+          '<td style="text-align:right;white-space:nowrap;font-weight:600">' + esc(r.balance) + (r.unit ? ' ' + esc(r.unit) : '') + '</td>' +
+          '<td style="white-space:nowrap">' + (r.recordId ? '<a href="javascript:void(0)" data-action="view-record" data-arg="' + esc(r.recordId) + '" style="color:var(--accent);text-decoration:none">' + esc(r.recordId) + '</a>' : dash) + '</td>' +
+        '</tr>';
+      }).join(''));
+    var count = function (k) { return (D ? D.rows : []).filter(function (r) { return r.kind === k; }).length; };
+    return '' +
+      '<div class="card" style="border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">' +
+        '<div style="width:170px"><div style="font-size:12px;color:var(--muted);margin-bottom:4px">ตั้งแต่วันที่</div><input type="date" id="depUseFrom" value="' + esc(u.from) + '" style="' + inputStyle + '"></div>' +
+        '<div style="width:170px"><div style="font-size:12px;color:var(--muted);margin-bottom:4px">ถึงวันที่</div><input type="date" id="depUseTo" value="' + esc(u.to) + '" style="' + inputStyle + '"></div>' +
+        '<button class="btn btn-primary" data-action="deposit-usage-run"' + (u.loading ? ' disabled' : '') + '>' + (u.loading ? '<span class="spin"></span>' : '<span class="ms">assessment</span>') + ' ดูรายงาน</button>' +
+        (D ? '<div style="margin-left:auto;font-size:12.5px;color:var(--text-2)">ฝาก <b>' + count('deposit') + '</b> · ใช้ <b>' + count('use') + '</b>' + (count('adjust') ? ' · ปรับยอด <b>' + count('adjust') + '</b>' : '') + ' รายการ</div>' : '') +
+      '</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center">' +
+        searchInputHtml('', u.q, 'ค้นหาชื่อยา / คนไข้ / HN / เลขบันทึก', 'window.__arich.onDepositUsageSearch(this.value)', 'width:280px') +
+        '<div class="pill-group">' + DEPOSIT_USAGE_KINDS.map(function (o) {
+          return '<button type="button" class="' + ((u.kind || '') === o.id ? 'active' : '') + '" data-action="deposit-usage-kind" data-arg="' + esc(o.id) + '">' + esc(o.label) + '</button>';
+        }).join('') + '</div>' +
+      '</div>' +
+      listCardWrap('<div style="overflow-x:auto"><table class="table stock-table vmid" style="width:100%;border-collapse:collapse">' +
+        '<thead><tr style="text-align:left;font-size:12px;color:var(--muted);background:var(--hover-bg)">' +
+          '<th style="' + th + '">วันที่ทำรายการ</th><th style="' + th + '">ชื่อรายการยา</th><th style="' + th + '">ชื่อคนไข้ที่ฝาก</th><th style="' + th + '">ชื่อคนไข้ที่ใช้</th>' +
+          '<th style="' + th + '">จำนวนฝาก/ใช้</th><th style="' + th + ';text-align:right">จำนวนคงเหลือ</th><th style="' + th + '">บันทึกการรักษาอ้างอิง</th>' +
+        '</tr></thead><tbody>' + body + '</tbody></table></div>', u.loading && !!D) + localPagerHtml(pg, 'depUsage') +
+      '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">เรียงจากวันที่ล่าสุด · จำนวนคงเหลือ = ยอดคงเหลือของยาฝากรายการนั้นหลังทำรายการ · ใช้ = จำนวนที่ตัดจากยาฝาก (รวมที่รับกลับ) · คลิกที่แถวเพื่อดูความเคลื่อนไหวทั้งหมดของยาฝากรายการนั้น</div>';
   }
   /* ---- movement side panel (own root, see renderDepositPanel) ---- */
   var depositPanelEl = document.getElementById('depositPanelRoot');
@@ -7976,6 +8048,9 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
       case 'report-pdf-download': downloadReportPdf(); break;
       case 'edit-deposit': editDepositModal(arg); break;
       case 'deposit-filter': state.deposits.filter = arg; state.deposits.page = 1; render(); break;
+      case 'deposit-tab': if (arg !== state.deposits.tab) { state.deposits.tab = arg; if (state.deposits.panel) closeDepositPanel(); render(); if (arg === 'usage' && !state.deposits.usage.data) loadDepositUsage(); } break;
+      case 'deposit-usage-run': loadDepositUsage(); break;
+      case 'deposit-usage-kind': state.deposits.usage.kind = arg; state.deposits.usage.page = 1; render(); break;
       case 'new-procedure': openModal('procedure', { name: '', category: '', price: 0, status: 'active' }); break;
       case 'edit-procedure': { var procX = procedureById(arg); if (procX) openModal('procedure', Object.assign({}, procX)); break; }
       case 'delete-procedure': deleteProcedureConfirm(arg); break;
@@ -8386,7 +8461,7 @@ var DEFAULT_LOGO_URL = <?!= JSON.stringify(defaultLogoUrl || '') ?>;
   /* Expose the handful of functions used by inline oninput= attributes (search boxes need live typing without full re-render churn on every keystroke going through data-action). */
   window.__arich = {
     onListSearchInput: onListSearchInput,
-    onPatientSuggestSearch: onPatientSuggestSearch, onDepositOwnerSearch: onDepositOwnerSearch, onPromotionSearch: onPromotionSearch,
+    onPatientSuggestSearch: onPatientSuggestSearch, onDepositUsageSearch: onDepositUsageSearch, onDepositOwnerSearch: onDepositOwnerSearch, onPromotionSearch: onPromotionSearch,
     onProcedureSearch: onProcedureSearch, onDepositSearch: onDepositSearch, onStockSumSearch: onStockSumSearch
   };
 
