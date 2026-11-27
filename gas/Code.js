@@ -3071,7 +3071,7 @@ function applyVisitStatus_(r, to, day, shiftDate, doctor) {
   if (to === 'completed') throw ValidationError_('สถานะเสร็จสิ้นเกิดจากการชำระเงินเท่านั้น');
   // จัดยาแล้ว only moves on to รอดำเนินการ: the profile is filled in and the front creates the ใบ OPD there.
   if (from === 'dispensed' && to !== 'pending') throw ValidationError_('ต้องเปลี่ยนเป็นรอดำเนินการก่อน (ใส่ข้อมูลคนไข้และสร้างใบ OPD)');
-  if (to === 'pending' && !r.PatientID) throw ValidationError_('กรุณาใส่ข้อมูลคนไข้ก่อนเปลี่ยนเป็นรอดำเนินการ');
+  if (to === 'pending' && !r.PatientID && from === 'dispensed') throw ValidationError_('กรุณาใส่ข้อมูลคนไข้ก่อนเปลี่ยนเป็นรอดำเนินการ');
   if (to === 'with_doctor') {
     if (!r.OpdCreatedAt) throw ValidationError_('ต้องสร้างใบ OPD ก่อนพบแพทย์');
     if (doctor) { r.VisitDoctorID = doctor.id; r.VisitDoctorName = doctor.name; }
@@ -3520,7 +3520,8 @@ function withdrawLines_(record, ctx) {
   return (Array.isArray(record.withdrawItems) ? record.withdrawItems : []).filter(function (it) { return it && it.withdrawId; }).map(function (it, i) {
     var line = ' (ยาจากใบเบิก บรรทัดที่ ' + (i + 1) + ')';
     var wd = ctx.wdById[it.withdrawId];
-    if (!wd || wd.PatientID !== ctx.patientId) throw ValidationError_('ไม่พบรายการเบิกยาของคนไข้รายนี้ (อาจถูกลบไปแล้ว)' + line);
+    // A record without a profile (รออัพเดท) keeps only the withdrawal lines already its own.
+    if (!wd || wd.PatientID !== ctx.patientId || (!ctx.patientId && wd.RecordID !== ctx.rid)) throw ValidationError_('ไม่พบรายการเบิกยาของคนไข้รายนี้ (อาจถูกลบไปแล้ว)' + line);
     if (wd.RecordID && wd.RecordID !== ctx.rid) throw ValidationError_('รายการเบิกยา ' + wd.ItemName + ' ถูกบันทึกในการรักษา ' + wd.RecordID + ' แล้ว' + line);
     if (seen[it.withdrawId]) throw ValidationError_('รายการเบิกยา ' + wd.ItemName + ' ซ้ำ' + line);
     seen[it.withdrawId] = true;
@@ -4095,8 +4096,12 @@ function saveRecord(token, record) {
     // sends (now always '' going forward); old records keep their value.
     // วิธีชำระเงิน/สถานะการชำระ are set afterwards by payRecord (ขั้นตอนชำระเงิน).
     // แพทย์ is chosen per หัตถการ/โปร line (one visit may pay several doctors).
-    requireFields_(record, { date: 'วันที่', patientId: 'คนไข้', salesId: 'เซลล์' });
+    requireFields_(record, { date: 'วันที่', salesId: 'เซลล์' });
     requireDateStr_(record.date, 'วันที่');
+    // No profile yet (ไม่พบในรายชื่อ): like จัดยา-เบิกยา, the typed name is kept with PatientID '' (รออัพเดท)
+    // until the profile is set with assignRecordPatient.
+    var typedName = record.patientId ? '' : String(record.patientName || '').trim();
+    if (!record.patientId && !typedName) throw ValidationError_('กรุณาเลือกคนไข้ หรือพิมพ์ชื่อคนไข้');
     // "amount" here is จำนวนเงินหัตถการ — the base procedure price that
     // sales/doctor commission % are computed against: the sum of the
     // รายการหัตถการ lines (a client without them still sends a plain amount).
@@ -4135,10 +4140,15 @@ function saveRecord(token, record) {
       var sheet = getSheet_(CONFIG.SHEETS.RECORDS);
       var isNew = !record.id;
       var patientRows = getRows_(getSheet_(CONFIG.SHEETS.PATIENTS));
-      var patient = patientRows.filter(function (p) { return p.ID === record.patientId; })[0];
+      var patient = record.patientId
+        ? patientRows.filter(function (p) { return p.ID === record.patientId; })[0]
+        : { ID: '', FirstName: typedName, LastName: '', Phone: '' };
       if (!patient) throw ValidationError_('ไม่พบข้อมูลคนไข้ที่เลือก');
       // รายการยาฝาก from another patient's ยาฝาก (ใช้ยาฝากคนอื่น); the patient's own when blank or the same person.
       var depositFrom = null;
+      if (depositUseItems.length && !patient.ID && record.depositFrom !== 'other') {
+        throw ValidationError_('ยังไม่มีข้อมูลคนไข้ — รายการยาฝากใช้ได้เฉพาะยาฝากของคนอื่น (หรือเลือกคนไข้จากรายชื่อก่อน)');
+      }
       if (depositUseItems.length && record.depositFrom === 'other') {
         if (!record.depositPatientId) throw ValidationError_('กรุณาเลือกคนไข้เจ้าของยาฝาก');
         if (record.depositPatientId !== patient.ID) {
@@ -4191,6 +4201,7 @@ function saveRecord(token, record) {
         var existingRows = getRows_(sheet);
         var existing = existingRows.filter(function (r) { return r.RID === record.id; })[0];
         if (!existing) throw ValidationError_('ไม่พบข้อมูลการรักษาที่จะแก้ไข');
+        if (existing.PatientID && !patient.ID) throw ValidationError_('กรุณาเลือกคนไข้จากรายชื่อ');
         // Editing a record keeps the sales % it was saved with; only picking a
         // different sales person takes that person's current rate.
         if (sales && existing.SalesID === sales.SalesID && existing.SalesCommissionPct !== '' && existing.SalesCommissionPct != null) {
@@ -4245,7 +4256,7 @@ function saveRecord(token, record) {
 
       var obj = {
         RID: rid,
-        Date: record.date, PatientID: patient.ID, PatientName: patient.FirstName + ' ' + patient.LastName,
+        Date: record.date, PatientID: patient.ID, PatientName: patient.ID ? patient.FirstName + ' ' + patient.LastName : typedName,
         Phone: patient.Phone, ServiceCategory: record.serviceCategory || '', Detail: record.detail || '',
         SalesID: record.salesId || '', SalesName: salesName,
         // Payment fields only change through payRecord.
@@ -4290,6 +4301,7 @@ function saveRecord(token, record) {
       // "สร้างใบ OPD" (จัดยา-เบิกยา / the รอดำเนินการ card): saving the ใบ OPD moves จัดยาแล้ว / รอดำเนินการ on to
       // รอพบแพทย์, which takes today's queue number (and today as the date of a record dispensed earlier).
       if (record.toWaitingDoctor && !isNew) {
+        if (visitStatusOf_(obj) === 'dispensed' && !patient.ID) throw ValidationError_('กรุณาใส่ข้อมูลคนไข้ก่อนสร้างใบ OPD');
         if (visitStatusOf_(obj) === 'dispensed') obj.VisitStatus = 'pending'; // the profile is there (patient above)
         if (visitStatusOf_(obj) === 'pending') applyVisitStatus_(obj, 'waiting_doctor', todayStr_(), true);
       }
@@ -4774,7 +4786,7 @@ function listMedWithdrawals(token, opts) {
 
 /**
  * Gives a record that was made with only a typed name (รออัพเดท) its real patient: the Records row and every
- * จัดยา-เบิกยา line of it take the patient's id, name and phone. Refused once the record has a patient.
+ * จัดยา-เบิกยา line and ยาฝาก lot of it take the patient's id, name and phone. Refused once the record has a patient.
  */
 function assignRecordPatient(token, rid, patientId) {
   return safeCall_(function () {
@@ -4793,6 +4805,11 @@ function assignRecordPatient(token, rid, patientId) {
       var wdSheet = getSheet_(CONFIG.SHEETS.MED_WITHDRAWALS);
       getRows_(wdSheet).filter(function (w) { return w.RecordID === rid; }).forEach(function (w) {
         updateRowByIndex_(wdSheet, CONFIG.HEADERS.MedWithdrawals, w._row, Object.assign({}, w, { PatientID: patient.ID, PatientName: name, Phone: patient.Phone }));
+      });
+      // ยาฝาก this record put in under the typed name (ถือยาเข้า / พัสดุ / ...) become the patient's.
+      var depSheet = getSheet_(CONFIG.SHEETS.MED_DEPOSITS);
+      getRows_(depSheet).filter(function (l) { return l.RecordID === rid && !l.PatientID; }).forEach(function (l) {
+        updateRowByIndex_(depSheet, CONFIG.HEADERS.MedDeposits, l._row, Object.assign({}, l, { PatientID: patient.ID, PatientName: name, UpdatedAt: nowStr_() }));
       });
       writeAudit_(session, 'UPDATE', 'Record', rid, 'ข้อมูลคนไข้: ' + row.PatientName + ' → ' + patient.ID + ' ' + name);
       bumpDashboardCacheVersion_();
