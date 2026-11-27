@@ -295,7 +295,9 @@ var CONFIG = {
     // StockLoc (ARICH): which ยา stock a medicine row belongs to, 'A' | 'B'
     // (blank on supplies). The same ยา kept in both stocks is two rows, and
     // nothing moves between them — every pick names its stock.
-    Stock: ['ItemID', 'Name', 'Category', 'Unit', 'Qty', 'CreatedAt', 'UpdatedAt', 'StockType', 'MinQty', 'CostPrice', 'Price1', 'Price3', 'Price5', 'Price10', 'Price20', 'Price50', 'StockLoc'],
+    Stock: ['ItemID', 'Name', 'Category', 'Unit', 'Qty', 'CreatedAt', 'UpdatedAt', 'StockType', 'MinQty', 'CostPrice', 'Price1', 'Price3', 'Price5', 'Price10', 'Price20', 'Price50', 'StockLoc',
+      // หน่วยใหญ่ (e.g. กล่อง): BigUnit name, PackSize = how many Unit (หน่วยย่อย) in one, its own ราคาทุน and ราคาขาย tiers (by box count). Qty stays in Unit.
+      'BigUnit', 'PackSize', 'BigCostPrice', 'BigPrice1', 'BigPrice3', 'BigPrice5', 'BigPrice10', 'BigPrice20', 'BigPrice50'],
     // SaleGroups (ARICH): the Sale groups a Sales row can belong to (Status
     // 'active' | 'inactive'). Sales.GroupID points here by id, never by name.
     SaleGroups: ['GroupID', 'Name', 'Status', 'CreatedAt', 'UpdatedAt'],
@@ -306,7 +308,7 @@ var CONFIG = {
     // blank tier = no price at that tier. Rule (see resolveItemPrices_): an
     // agent's row is used whole, else the group's row whole, else the item's
     // own Price1…Price50 — tiers are never mixed across levels.
-    PriceOverrides: ['PriceID', 'ItemID', 'ItemName', 'Scope', 'TargetID', 'TargetName', 'Price1', 'Price3', 'Price5', 'Price10', 'Price20', 'Price50', 'Status', 'UpdatedAt', 'UpdatedBy'],
+    PriceOverrides: ['PriceID', 'ItemID', 'ItemName', 'Scope', 'TargetID', 'TargetName', 'Price1', 'Price3', 'Price5', 'Price10', 'Price20', 'Price50', 'Status', 'UpdatedAt', 'UpdatedBy', 'BigPrice1', 'BigPrice3', 'BigPrice5', 'BigPrice10', 'BigPrice20', 'BigPrice50'],
     // StockLog (round 25) — one row per item PER "อัพเดตสต๊อก" batch save; a
     // single save (one Date + one Note) can spawn several StockLog rows,
     // one per item line, sharing that Date/Note (mirrors the
@@ -375,8 +377,8 @@ var CONFIG = {
   // (see applyTextColumnFormat_), so a cell left date-formatted from earlier
   // data can't turn a quantity or price into a date.
   NUMBER_COLUMNS: {
-    Stock: ['Qty', 'MinQty', 'CostPrice', 'Price1', 'Price3', 'Price5', 'Price10', 'Price20', 'Price50'],
-    PriceOverrides: ['Price1', 'Price3', 'Price5', 'Price10', 'Price20', 'Price50'],
+    Stock: ['Qty', 'MinQty', 'CostPrice', 'Price1', 'Price3', 'Price5', 'Price10', 'Price20', 'Price50', 'PackSize', 'BigCostPrice', 'BigPrice1', 'BigPrice3', 'BigPrice5', 'BigPrice10', 'BigPrice20', 'BigPrice50'],
+    PriceOverrides: ['Price1', 'Price3', 'Price5', 'Price10', 'Price20', 'Price50', 'BigPrice1', 'BigPrice3', 'BigPrice5', 'BigPrice10', 'BigPrice20', 'BigPrice50'],
     StockLog: ['QtyIn', 'QtyRemaining', 'QtyOut'],
     MedDeposits: ['QtyRemaining', 'QtyDeposited'],
     MedWithdrawals: ['Qty', 'UnitCost', 'Amount', 'UnitPrice', 'SaleAmount'],
@@ -1071,8 +1073,14 @@ function listAllStockLite(token) {
     var ovrByItem = stockPriceOverridesByItem_();
     var data = rows.map(function (s) {
       var o = { id: s.ItemID, name: s.Name, category: s.Category, unit: s.Unit, qty: Number(s.Qty) || 0, type: stockTypeOf_(s), loc: stockLocOf_(s), prices: STOCK_PRICE_TIERS.map(function (t) { return numOrNull_(s['Price' + t]); }) };
+      var pack = packSizeOf_(s);
+      if (pack) { o.bigUnit = String(s.BigUnit || '').trim(); o.packSize = pack; o.bigPrices = bigPricesOf_(s); }
       // ovr: {'g:<GroupID>': [6 tiers], 'a:<SalesID>': [6 tiers]} — the client picks agent's row, else group's row, else standard (resolveItemPrices_)
-      (ovrByItem[s.ItemID] || []).forEach(function (p) { (o.ovr = o.ovr || {})[(p.scope === 'agent' ? 'a:' : 'g:') + p.targetId] = p.prices; });
+      (ovrByItem[s.ItemID] || []).forEach(function (p) {
+        var k = (p.scope === 'agent' ? 'a:' : 'g:') + p.targetId;
+        (o.ovr = o.ovr || {})[k] = p.prices;
+        if (pack) (o.bovr = o.bovr || {})[k] = p.bigPrices; // the same row's หน่วยใหญ่ tiers
+      });
       return o;
     });
     try { cache.put(CONFIG.CACHE.STOCK_LITE_KEY, JSON.stringify(data), CONFIG.CACHE.LITE_TTL); } catch (e) { /* too large for cache — still return live data */ }
@@ -2066,8 +2074,10 @@ function listStock(token, opts) {
       o.depositQty = depositByItem[r.ItemID] || 0;
       o.overrides = ovrByItem[r.ItemID] || [];
       o.standardPrices = o.prices;
+      o.standardBigPrices = o.bigPrices;
       var res = resolveItemPrices_(r, o.overrides, who);
       o.prices = res.prices;
+      o.bigPrices = res.bigPrices;
       o.priceSource = res.source;
       o.priceRefId = res.refId;
       return o;
@@ -2117,14 +2127,15 @@ function stockLocOf_(s) {
   return String(s.StockLoc || '').toUpperCase() === 'B' ? 'B' : 'A';
 }
 
-/** {ItemID: [{id, scope, targetId, targetName, prices:[6]}]} from the PriceOverrides sheet (inactive rows left out). */
+/** {ItemID: [{id, scope, targetId, targetName, prices:[6], bigPrices:[6]}]} from the PriceOverrides sheet (inactive rows left out). */
 function stockPriceOverridesByItem_() {
   var out = {};
   getRows_(getSheet_(CONFIG.SHEETS.PRICE_OVERRIDES)).forEach(function (p) {
     if (!p.ItemID || (p.Scope !== 'group' && p.Scope !== 'agent') || !p.TargetID || !isActiveStatus_(p.Status)) return;
     (out[p.ItemID] = out[p.ItemID] || []).push({
       id: p.PriceID, scope: p.Scope, targetId: String(p.TargetID), targetName: p.TargetName || '',
-      prices: STOCK_PRICE_TIERS.map(function (t) { return numOrNull_(p['Price' + t]); })
+      prices: STOCK_PRICE_TIERS.map(function (t) { return numOrNull_(p['Price' + t]); }),
+      bigPrices: bigPricesOf_(p)
     });
   });
   return out;
@@ -2136,15 +2147,26 @@ function stockPriceOverridesByItem_() {
  * item's own Price1…Price50. The chosen row is used WHOLE: tiers are never
  * mixed across levels, so a blank tier in the agent's row stays blank.
  * who: {salesId, groupId} (either may be blank).
- * Returns {prices:[6], source:'agent'|'group'|'standard', refId}.
+ * Returns {prices:[6], bigPrices:[6] (ราคาหน่วยใหญ่ of the same row), source:'agent'|'group'|'standard', refId}.
  */
 function resolveItemPrices_(s, overrides, who) {
   who = who || {};
   var find = function (scope, id) { return id ? (overrides || []).filter(function (p) { return p.scope === scope && p.targetId === String(id); })[0] : null; };
   var agent = find('agent', who.salesId), group = agent ? null : find('group', who.groupId);
   var row = agent || group;
-  if (row) return { prices: row.prices.slice(), source: agent ? 'agent' : 'group', refId: row.id };
-  return { prices: STOCK_PRICE_TIERS.map(function (t) { return numOrNull_(s['Price' + t]); }), source: 'standard', refId: s.ItemID };
+  if (row) return { prices: row.prices.slice(), bigPrices: (row.bigPrices || STOCK_PRICE_TIERS.map(function () { return null; })).slice(), source: agent ? 'agent' : 'group', refId: row.id };
+  return { prices: STOCK_PRICE_TIERS.map(function (t) { return numOrNull_(s['Price' + t]); }), bigPrices: bigPricesOf_(s), source: 'standard', refId: s.ItemID };
+}
+
+/** BigPrice1…BigPrice50 of a Stock / PriceOverrides row (ราคาขายต่อหน่วยใหญ่, tiers by หน่วยใหญ่ count). */
+function bigPricesOf_(row) {
+  return STOCK_PRICE_TIERS.map(function (t) { return numOrNull_(row['BigPrice' + t]); });
+}
+
+/** หน่วยย่อย in one หน่วยใหญ่ (Stock.PackSize); null when the item has no หน่วยใหญ่. */
+function packSizeOf_(s) {
+  var n = numOrNull_(s.PackSize);
+  return n && n > 0 && String(s.BigUnit || '').trim() ? n : null;
 }
 
 /**
@@ -2210,9 +2232,10 @@ function mapStockOut_(s, latestLog, showCost) {
     minQty: numOrNull_(s.MinQty),
     prices: STOCK_PRICE_TIERS.map(function (t) { return numOrNull_(s['Price' + t]); }),
     latestDate: latestLog ? dateStr_(latestLog.Date) : null,
-    latestQtyRemaining: latestLog ? (Number(latestLog.QtyRemaining) || 0) : null
+    latestQtyRemaining: latestLog ? (Number(latestLog.QtyRemaining) || 0) : null,
+    bigUnit: String(s.BigUnit || '').trim(), packSize: numOrNull_(s.PackSize), bigPrices: bigPricesOf_(s)
   };
-  if (showCost) out.costPrice = numOrNull_(s.CostPrice);
+  if (showCost) { out.costPrice = numOrNull_(s.CostPrice); out.bigCostPrice = numOrNull_(s.BigCostPrice); }
   return out;
 }
 
@@ -2237,7 +2260,8 @@ function stockLogRow_(session, logId, date, item, kind, qtyIn, qtyOut, qtyRemain
 }
 
 /**
- * item: {id?, type, name, category, unit, minQty, costPrice, prices:[6], qty}.
+ * item: {id?, type, name, category, unit, minQty, costPrice, prices:[6], qty,
+ *   bigUnit, packSize, bigCostPrice, bigPrices:[6]} (หน่วยใหญ่: name, หน่วยย่อย per one, its ราคาทุน / ราคาขาย).
  * `qty` is only used when creating an item (written as a ยอดยกมา StockLog
  * entry); an existing item's quantity only changes through StockLog writes
  * (adjustStock / saveStockUpdate / importStockCsv), never through this form.
@@ -2248,6 +2272,7 @@ function saveStockItem(token, item) {
     requireFields_(item, { name: 'ชื่อสินค้า', category: 'หมวดหมู่', unit: 'หน่วยนับ' });
     var isAdmin = session.level === 'admin';
     var prices = Array.isArray(item.prices) ? item.prices : [];
+    var bigPrices = Array.isArray(item.bigPrices) ? item.bigPrices : [];
 
     var lock = LockService.getScriptLock();
     lock.waitLock(30000);
@@ -2271,6 +2296,7 @@ function saveStockItem(token, item) {
         CostPrice: isAdmin ? optionalNumber_(item.costPrice, 'ราคาทุน') : (existing ? existing.CostPrice : '')
       });
       STOCK_PRICE_TIERS.forEach(function (t, i) { obj['Price' + t] = optionalNumber_(prices[i], 'ราคาขาย ' + t + ' ชิ้น'); });
+      applyBigUnit_(obj, item, bigPrices, isAdmin ? null : (existing || {}), '');
       delete obj._row;
       if (obj.StockType === 'medicine' && (isNew || obj.StockLoc !== stockLocOf_(existing)) && !isStockLocOpen_(obj.StockLoc)) {
         throw ValidationError_('คลังยานี้ปิดอยู่ — เปิดได้ที่ ตั้งค่าคลินิก > ข้อมูลบริษัท');
@@ -2291,8 +2317,8 @@ function saveStockItem(token, item) {
         // blank in every tier removes it (saveStockPriceOverrides_ drops rows with no price).
         var pt = item.priceTarget, ptId = String(pt.targetId);
         var rest = (stockPriceOverridesByItem_()[obj.ItemID] || []).filter(function (o) { return !(o.scope === pt.scope && o.targetId === ptId); })
-          .map(function (o) { return { scope: o.scope, targetId: o.targetId, prices: o.prices.map(function (v) { return v == null ? '' : v; }) }; });
-        rest.push({ scope: pt.scope, targetId: ptId, prices: pt.prices });
+          .map(function (o) { var blank = function (v) { return v == null ? '' : v; }; return { scope: o.scope, targetId: o.targetId, prices: o.prices.map(blank), bigPrices: (o.bigPrices || []).map(blank) }; });
+        rest.push({ scope: pt.scope, targetId: ptId, prices: pt.prices, bigPrices: pt.bigPrices });
         saveStockPriceOverrides_(session, obj, rest);
       }
       writeAudit_(session, isNew ? 'CREATE' : 'UPDATE', 'Stock', obj.ItemID, obj.Name);
@@ -2306,8 +2332,24 @@ function saveStockItem(token, item) {
 }
 
 /**
+ * Writes the หน่วยใหญ่ fields of item (bigUnit, packSize, bigCostPrice, bigPrices) onto Stock row obj.
+ * A หน่วยใหญ่ price needs its name and จำนวนชิ้น (> 0). keepCostFrom: the existing row whose
+ * BigCostPrice stays (non-admins never set ราคาทุน), or null. line: suffix for messages.
+ */
+function applyBigUnit_(obj, item, bigPrices, keepCostFrom, line) {
+  obj.BigUnit = String(item.bigUnit || '').trim();
+  obj.PackSize = optionalNumber_(item.packSize, 'จำนวนชิ้นต่อหน่วยใหญ่' + line);
+  if (obj.PackSize === 0) obj.PackSize = '';
+  obj.BigCostPrice = keepCostFrom ? (keepCostFrom.BigCostPrice === undefined ? '' : keepCostFrom.BigCostPrice) : optionalNumber_(item.bigCostPrice, 'ราคาทุนหน่วยใหญ่' + line);
+  STOCK_PRICE_TIERS.forEach(function (t, i) { obj['BigPrice' + t] = optionalNumber_(bigPrices[i], 'ราคาขายหน่วยใหญ่ ' + t + ' ' + (obj.BigUnit || 'หน่วย') + line); });
+  var priced = obj.BigCostPrice !== '' || STOCK_PRICE_TIERS.some(function (t) { return obj['BigPrice' + t] !== ''; });
+  if ((priced || obj.PackSize !== '') && !obj.BigUnit) throw ValidationError_('กรุณาระบุชื่อหน่วยใหญ่ (เช่น กล่อง)' + line);
+  if ((priced || obj.BigUnit) && obj.PackSize === '') throw ValidationError_('กรุณาระบุจำนวนชิ้นต่อหน่วยใหญ่' + line);
+}
+
+/**
  * Saves one item's Sale group / Sale agent price rows (PriceOverrides).
- * list: [{scope: 'group'|'agent', targetId, prices:[6]}] — the item's whole set
+ * list: [{scope: 'group'|'agent', targetId, prices:[6], bigPrices:[6]}] — the item's whole set
  * of override rows: rows already in the sheet are updated in place (keeping
  * their PriceID), new ones appended, and ones left out removed. A row with no
  * price at all is dropped, and a (scope, targetId) pair may appear only once.
@@ -2326,15 +2368,16 @@ function saveStockPriceOverrides_(session, item, list) {
     if (seen[k]) throw ValidationError_('ราคาซ้ำ: ' + label);
     seen[k] = true;
     var prices = STOCK_PRICE_TIERS.map(function (t, j) { return optionalNumber_((p.prices || [])[j], 'ราคาขาย ' + t + ' ชิ้น (' + label + ')'); });
-    return { scope: p.scope, targetId: id, targetName: known[id], prices: prices };
-  }).filter(function (p) { return p.prices.some(function (v) { return v !== ''; }); });
+    var bigPrices = STOCK_PRICE_TIERS.map(function (t, j) { return optionalNumber_((p.bigPrices || [])[j], 'ราคาขายหน่วยใหญ่ ' + t + ' (' + label + ')'); });
+    return { scope: p.scope, targetId: id, targetName: known[id], prices: prices, bigPrices: bigPrices };
+  }).filter(function (p) { return p.prices.concat(p.bigPrices).some(function (v) { return v !== ''; }); });
   var sheet = getSheet_(CONFIG.SHEETS.PRICE_OVERRIDES), H = CONFIG.HEADERS.PriceOverrides;
   var mine = getRows_(sheet).filter(function (r) { return r.ItemID === item.ItemID; });
   var byKey = {};
   mine.forEach(function (r) { byKey[r.Scope + ':' + r.TargetID] = r; });
   var write = function (p, row) {
     var obj = { PriceID: row ? row.PriceID : 'PX' + nextSeq_('PRICE_OVERRIDE', 5), ItemID: item.ItemID, ItemName: item.Name, Scope: p.scope, TargetID: p.targetId, TargetName: p.targetName, Status: 'active', UpdatedAt: nowStr_(), UpdatedBy: session.username };
-    STOCK_PRICE_TIERS.forEach(function (t, j) { obj['Price' + t] = p.prices[j]; });
+    STOCK_PRICE_TIERS.forEach(function (t, j) { obj['Price' + t] = p.prices[j]; obj['BigPrice' + t] = p.bigPrices[j]; });
     if (row) updateRowByIndex_(sheet, H, row._row, obj); else appendRow_(sheet, H, obj);
   };
   var keep = {};
@@ -2444,7 +2487,7 @@ function nextSeqBlock_(counterKey, n, pad) {
 
 /**
  * CSV upload. payload: {type, rows:[{name, category, unit, minQty, qty,
- * costPrice, prices:[6]}]} — already parsed client-side. Rows are matched to
+ * costPrice, prices:[6], bigUnit, packSize, bigCostPrice, bigPrices:[6]}]} — already parsed client-side. Rows are matched to
  * existing items of the same type by name (trimmed, case-insensitive):
  * matches are updated, the rest created. A blank cell leaves that field as
  * it was; a non-blank จำนวนคงเหลือ that differs from the current quantity is
@@ -2475,7 +2518,11 @@ function importStockCsv(token, payload) {
         minQty: optionalNumber_(r.minQty, 'จำนวนสต๊อกขั้นต่ำ' + line),
         qty: optionalNumber_(r.qty, 'จำนวนคงเหลือ' + line),
         costPrice: isAdmin ? optionalNumber_(r.costPrice, 'ราคาทุน' + line) : '',
-        prices: STOCK_PRICE_TIERS.map(function (t, k) { return optionalNumber_(prices[k], 'ราคาขาย ' + t + ' ชิ้น' + line); })
+        prices: STOCK_PRICE_TIERS.map(function (t, k) { return optionalNumber_(prices[k], 'ราคาขาย ' + t + ' ชิ้น' + line); }),
+        bigUnit: String(r.bigUnit || '').trim(),
+        packSize: optionalNumber_(r.packSize, 'จำนวนชิ้นต่อหน่วยใหญ่' + line),
+        bigCostPrice: isAdmin ? optionalNumber_(r.bigCostPrice, 'ราคาทุนหน่วยใหญ่' + line) : '',
+        bigPrices: STOCK_PRICE_TIERS.map(function (t, k) { return optionalNumber_((Array.isArray(r.bigPrices) ? r.bigPrices : [])[k], 'ราคาขายหน่วยใหญ่ ' + t + line); })
       };
     });
 
@@ -2512,6 +2559,12 @@ function importStockCsv(token, payload) {
         if (r.minQty !== '') row.MinQty = r.minQty;
         if (r.costPrice !== '') row.CostPrice = r.costPrice;
         STOCK_PRICE_TIERS.forEach(function (t, k) { if (r.prices[k] !== '') row['Price' + t] = r.prices[k]; });
+        if (r.bigUnit) row.BigUnit = r.bigUnit;
+        if (r.packSize !== '') row.PackSize = r.packSize || '';
+        if (r.bigCostPrice !== '') row.BigCostPrice = r.bigCostPrice;
+        STOCK_PRICE_TIERS.forEach(function (t, k) { if (r.bigPrices[k] !== '') row['BigPrice' + t] = r.bigPrices[k]; });
+        var bigPriced = (row.BigCostPrice !== undefined && row.BigCostPrice !== '') || STOCK_PRICE_TIERS.some(function (t) { return row['BigPrice' + t] !== undefined && row['BigPrice' + t] !== ''; });
+        if (bigPriced && (!String(row.BigUnit || '').trim() || !(Number(row.PackSize) > 0))) throw ValidationError_('ราคาหน่วยใหญ่ต้องมีชื่อหน่วยใหญ่และจำนวนชิ้นต่อหน่วยใหญ่ (' + r.name + ')');
         row.UpdatedAt = now;
         if (r.qty !== '') {
           var current = Number(row.Qty) || 0;
@@ -3037,13 +3090,15 @@ function recordCollected_(r) {
    while unpaid; เสร็จสิ้น is only ever reached by payment. Arriving (รอพบแพทย์)
    takes the day's next queue number, which the customer keeps to the end.
    --------------------------------------------------------------------- */
-var VISIT_FLOW_ = ['dispensed', 'pending', 'waiting_doctor', 'with_doctor', 'waiting_payment', 'completed'];
+// 'awaiting_patient' รออัพเดทข้อมูลคนไข้: a treatment record saved with only a typed name — off the board, no moves or
+// payment until assignRecordPatient gives it a profile (it then becomes 'pending').
+var VISIT_FLOW_ = ['awaiting_patient', 'dispensed', 'pending', 'waiting_doctor', 'with_doctor', 'waiting_payment', 'completed'];
 
 /** The record's step, whatever older rows stored: paid = เสร็จสิ้น; a stored 'completed' that isn't paid is รอชำระเงิน; ''/'scheduled' = จัดยาแล้ว. */
 function visitStatusOf_(r) {
   if (r.Status === 'paid') return 'completed';
   var v = String(r.VisitStatus || '');
-  if (v === 'pending' || v === 'waiting_doctor' || v === 'with_doctor' || v === 'waiting_payment') return v;
+  if (v === 'awaiting_patient' || v === 'pending' || v === 'waiting_doctor' || v === 'with_doctor' || v === 'waiting_payment') return v;
   if (v === 'completed') return r.Status === 'cancelled' ? 'completed' : 'waiting_payment';
   return 'dispensed';
 }
@@ -3069,6 +3124,7 @@ function applyVisitStatus_(r, to, day, shiftDate, doctor) {
   if (VISIT_FLOW_.indexOf(to) < 0) throw ValidationError_('สถานะการรักษาไม่ถูกต้อง');
   if (r.Status === 'paid') throw ValidationError_('ชำระเงินแล้ว — เปลี่ยนสถานะไม่ได้ (ยกเลิกการชำระเงินก่อน)');
   if (to === 'completed') throw ValidationError_('สถานะเสร็จสิ้นเกิดจากการชำระเงินเท่านั้น');
+  if (from === 'awaiting_patient' || to === 'awaiting_patient') throw ValidationError_('รายการนี้รออัพเดทข้อมูลคนไข้ — เพิ่มข้อมูลคนไข้ก่อน');
   // จัดยาแล้ว only moves on to รอดำเนินการ: the profile is filled in and the front creates the ใบ OPD there.
   if (from === 'dispensed' && to !== 'pending') throw ValidationError_('ต้องเปลี่ยนเป็นรอดำเนินการก่อน (ใส่ข้อมูลคนไข้และสร้างใบ OPD)');
   if (to === 'pending' && !r.PatientID && from === 'dispensed') throw ValidationError_('กรุณาใส่ข้อมูลคนไข้ก่อนเปลี่ยนเป็นรอดำเนินการ');
@@ -3452,7 +3508,7 @@ function medicineLines_(record, ctx) {
   record.medicineItems.forEach(function (it, i) {
     if (!it || (!String(it.name || '').trim() && !it.itemId)) return;
     var line = ' (ยาเบิกเพิ่ม บรรทัดที่ ' + (i + 1) + ')';
-    if (!('qtyDispensed' in it)) { // pre-dispense-table line: name + amount only
+    if (!('qtyDispensed' in it) && it.unitMode !== 'big') { // pre-dispense-table line: name + amount only
       out.items.push({ name: it.name || '', amount: 0 });
       return;
     }
@@ -3474,7 +3530,9 @@ function medicineLines_(record, ctx) {
     var stockRow = ctx.stockById[it.itemId];
     // A line saved before its stock closed names the old stock; the item now sits in the stock it was moved to.
     if (it.loc && String(it.loc).toUpperCase() !== stockLocOf_(stockRow) && isStockLocOpen_(it.loc)) throw ValidationError_('ยาที่เลือกไม่อยู่ใน Stock ' + it.loc + line);
-    var old = (ctx.oldLines || []).filter(function (l) { return l.itemId === it.itemId && l.unitCost != null; })[0];
+    if (it.unitMode === 'big') { out.items.push(bigMedicineLine_(it, stockRow, ctx, line)); return; }
+    if (oldLine && oldLine.unitMode === 'big') oldLine = null; // switched back to หน่วยย่อย: price afresh
+    var old = (ctx.oldLines || []).filter(function (l) { return l.itemId === it.itemId && l.unitCost != null && l.unitMode !== 'big'; })[0];
     var o = {
       itemId: it.itemId, name: String(stockRow.Name || it.name || '').trim(), loc: stockLocOf_(stockRow),
       qtyDispensed: requireNumber_(it.qtyDispensed || 0, 'จำนวนซื้อ' + line, { min: 0 }),
@@ -3502,9 +3560,47 @@ function medicineLines_(record, ctx) {
     out.total += o.amount;
     out.cost += o.qtyDispensed * o.unitCost;
   });
+  out.items.forEach(function (o) { if (o.unitMode === 'big') { out.total += o.amount; out.cost += o.qtyDispensed * o.unitCost; } });
   out.total = round2_(out.total);
   out.cost = round2_(out.cost);
   return out;
+}
+
+/**
+ * One ยาเบิกเพิ่ม line sold by หน่วยใหญ่ (it.unitMode 'big': it.qtyBig boxes at it.bigUnitPrice each).
+ * Stock, ยาฝาก and reports stay in หน่วยย่อย: qtyDispensed = qtyBig × packSize, and unitPrice /
+ * unitCost / salePrice are per หน่วยย่อย (the box figure ÷ packSize), so qty × price still gives the
+ * box totals. qtyUsed / ฝาก are หน่วยย่อย. packSize (and bigUnit) is kept from the saved line, so a
+ * later change to the item's จำนวนชิ้น does not change this record. The ราคาขาย tier is picked by box
+ * count from the เซลล์'s หน่วยใหญ่ table (agent / group / standard).
+ */
+function bigMedicineLine_(it, stockRow, ctx, line) {
+  var oldBig = (ctx.oldLines || []).filter(function (l) { return l.itemId === it.itemId && l.unitMode === 'big'; })[0];
+  var pack = oldBig && Number(oldBig.packSize) > 0 ? Number(oldBig.packSize) : packSizeOf_(stockRow);
+  if (!pack) throw ValidationError_('ยานี้ยังไม่ได้ตั้งหน่วยใหญ่ / จำนวนชิ้นต่อหน่วยใหญ่' + line);
+  var bigUnit = oldBig && oldBig.bigUnit ? oldBig.bigUnit : String(stockRow.BigUnit || '').trim();
+  var qtyBig = requireNumber_(it.qtyBig || 0, 'จำนวนซื้อ (' + bigUnit + ')' + line, { min: 0 });
+  var bigUnitPrice = requireNumber_(it.bigUnitPrice || 0, 'ราคาต่อ' + bigUnit + line, { min: 0 });
+  var bigCost = numOrNull_(stockRow.BigCostPrice);
+  var o = {
+    itemId: it.itemId, name: String(stockRow.Name || it.name || '').trim(), loc: stockLocOf_(stockRow),
+    unitMode: 'big', bigUnit: bigUnit, packSize: pack, qtyBig: qtyBig, bigUnitPrice: bigUnitPrice,
+    qtyDispensed: round2_(qtyBig * pack),
+    unitCost: oldBig && oldBig.unitCost != null ? Number(oldBig.unitCost) || 0 : (bigCost != null ? bigCost / pack : Number(stockRow.CostPrice) || 0)
+  };
+  depositSplit_(o, it, line);
+  o.unitPrice = bigUnitPrice / pack;
+  o.amount = round2_(qtyBig * bigUnitPrice);
+  var table = resolveItemPrices_(stockRow, ((ctx.overridesByItem || {})[it.itemId]) || [], salesWho_(ctx.sales));
+  var pick = pickTier_(table.bigPrices, qtyBig);
+  var same = oldBig && oldBig.priceSource && Number(oldBig.bigUnitPrice) === bigUnitPrice;
+  if (same) { o.priceSource = oldBig.priceSource; o.priceRefId = oldBig.priceRefId || ''; o.tier = oldBig.tier == null ? null : oldBig.tier; }
+  else if (pick && pick.price === bigUnitPrice) { o.priceSource = table.source; o.priceRefId = table.refId; o.tier = pick.tier; }
+  else { o.priceSource = 'manual'; o.priceRefId = ''; o.tier = null; }
+  var bigSale = same && oldBig.bigSalePrice != null ? Number(oldBig.bigSalePrice) : (pick ? pick.price : null);
+  o.bigSalePrice = bigSale;
+  o.salePrice = bigSale == null ? null : bigSale / pack;
+  return o;
 }
 
 /**
@@ -3520,8 +3616,8 @@ function withdrawLines_(record, ctx) {
   return (Array.isArray(record.withdrawItems) ? record.withdrawItems : []).filter(function (it) { return it && it.withdrawId; }).map(function (it, i) {
     var line = ' (ยาจากใบเบิก บรรทัดที่ ' + (i + 1) + ')';
     var wd = ctx.wdById[it.withdrawId];
-    // A record without a profile (รออัพเดท) keeps only the withdrawal lines already its own.
-    if (!wd || wd.PatientID !== ctx.patientId || (!ctx.patientId && wd.RecordID !== ctx.rid)) throw ValidationError_('ไม่พบรายการเบิกยาของคนไข้รายนี้ (อาจถูกลบไปแล้ว)' + line);
+    // A ใบเบิก line under a typed name (no PatientID) counts only if it is already this record's (it follows the record's profile).
+    if (!wd || (wd.PatientID ? wd.PatientID !== ctx.patientId : wd.RecordID !== ctx.rid)) throw ValidationError_('ไม่พบรายการเบิกยาของคนไข้รายนี้ (อาจถูกลบไปแล้ว)' + line);
     if (wd.RecordID && wd.RecordID !== ctx.rid) throw ValidationError_('รายการเบิกยา ' + wd.ItemName + ' ถูกบันทึกในการรักษา ' + wd.RecordID + ' แล้ว' + line);
     if (seen[it.withdrawId]) throw ValidationError_('รายการเบิกยา ' + wd.ItemName + ' ซ้ำ' + line);
     seen[it.withdrawId] = true;
@@ -3826,9 +3922,14 @@ function planDeposits_(session, ctx, oldSide, newSide) {
   var oldUsePid = oldSide.usePatientId || ctx.patientId, newUsePid = newSide.usePatientId || ctx.patientId;
   var pids = {};
   pids[ctx.patientId] = true; pids[oldUsePid] = true; pids[newUsePid] = true;
+  if (ctx.adoptTyped) pids[''] = true;
   var lots = getRows_(sheet).filter(function (r) { return pids[r.PatientID]; });
   var byId = {}, changed = {}, added = [];
   lots.forEach(function (l) { byId[l.DepositID] = l; });
+  // ctx.adoptTyped: the record was a typed name (รออัพเดท) and now has a profile — the lots it put in under that name become the patient's.
+  if (ctx.adoptTyped) lots.forEach(function (l) {
+    if (!l.PatientID && l.RecordID === ctx.rid) { l.PatientID = ctx.patientId; l.PatientName = ctx.patientName || ''; changed[l.DepositID] = l; }
+  });
   var itemNames = null;
   var itemName = function (itemId) {
     if (isOtherDepositId_(itemId)) return String(itemId).slice(OTHER_DEPOSIT_PREFIX_.length); // อื่นๆ (not in Stock)
@@ -4296,12 +4397,17 @@ function saveRecord(token, record) {
         UseOral: oralGroup.items.length ? 'TRUE' : 'FALSE', OralJSON: JSON.stringify(oralGroup.items), OralAmount: oralGroup.total, OralCost: oralGroup.cost
       };
       applyDoctorShares_(obj, doctorShares); // DoctorID/DoctorName/shares/ClinicShare
+      // No profile yet: รออัพเดทข้อมูลคนไข้ (off the board; a จัดยาแล้ว record keeps its step). A profile picked while
+      // editing such a record makes it รอดำเนินการ, and its ยาฝาก lots / ใบเบิก lines become the patient's (adopting).
+      var adopting = !isNew && !existing.PatientID && !!patient.ID;
+      if (!patient.ID && (isNew || visitStatusOf_(existing) === 'pending')) obj.VisitStatus = 'awaiting_patient';
+      if (adopting && visitStatusOf_(existing) === 'awaiting_patient') obj.VisitStatus = 'pending';
       // A ใบ OPD made by hand waits at รอดำเนินการ (visitFields above); the front moves it on to รอพบแพทย์ / พบแพทย์.
       if (record.complete && visitStatusOf_(obj) !== 'completed') applyVisitStatus_(obj, 'waiting_payment', todayStr_(), false);
       // "สร้างใบ OPD" (จัดยา-เบิกยา / the รอดำเนินการ card): saving the ใบ OPD moves จัดยาแล้ว / รอดำเนินการ on to
       // รอพบแพทย์, which takes today's queue number (and today as the date of a record dispensed earlier).
       if (record.toWaitingDoctor && !isNew) {
-        if (visitStatusOf_(obj) === 'dispensed' && !patient.ID) throw ValidationError_('กรุณาใส่ข้อมูลคนไข้ก่อนสร้างใบ OPD');
+        if (!patient.ID) throw ValidationError_('กรุณาใส่ข้อมูลคนไข้ก่อนสร้างใบ OPD');
         if (visitStatusOf_(obj) === 'dispensed') obj.VisitStatus = 'pending'; // the profile is there (patient above)
         if (visitStatusOf_(obj) === 'pending') applyVisitStatus_(obj, 'waiting_doctor', todayStr_(), true);
       }
@@ -4322,12 +4428,15 @@ function saveRecord(token, record) {
       // anything if a deposit lot would go negative / an item is missing.
       // The planned uses carry the lots they came from (see planDeposits_).
       var label = 'บันทึกการรักษา ' + obj.RID + ' · ' + obj.PatientName;
-      var depositPlan = planDeposits_(session, { rid: rid, date: record.date, patientId: patient.ID, patientName: obj.PatientName },
+      var depositPlan = planDeposits_(session, { rid: rid, date: record.date, patientId: patient.ID, patientName: obj.PatientName, adoptTyped: adopting },
         isNew ? { deposits: {}, uses: [] } : recordDepositSide_(existing), recordDepositSide_(obj));
       if (isTrue_(obj.StockApplied)) obj.DepositUseJSON = JSON.stringify(depositPlan.uses);
       applyStockEffects_(session, isNew ? {} : recordStockEffects_(existing), recordStockEffects_(obj), label);
       depositPlan.commit();
       linkWithdrawals_(wdSheet, wdRows, rid, withdrawItems);
+      if (adopting) getRows_(wdSheet).filter(function (w) { return w.RecordID === rid && !w.PatientID; }).forEach(function (w) {
+        updateRowByIndex_(wdSheet, CONFIG.HEADERS.MedWithdrawals, w._row, Object.assign({}, w, { PatientID: patient.ID, PatientName: obj.PatientName, Phone: patient.Phone }));
+      });
 
       if (isNew) {
         appendRow_(sheet, CONFIG.HEADERS.Records, obj);
@@ -4507,11 +4616,11 @@ function buildOpdSheetData_(rid) {
     { title: 'ยาฝาก (ใช้จาก stock ฝาก' + (r.DepositFromPatientName ? ' ของ ' + r.DepositFromPatientName : '') + ')', always: true, rows: !isTrue_(r.UseDepositUse) ? [] : depositUseItemsOf_(r.DepositUseJSON).map(function (l) { return { name: withLoc(l), qty: l.qtyIn, note: keepNote(l, l.qtyIn) }; }) },
     { title: 'ยาถือเข้า', always: true, rows: !isTrue_(r.UseOwnMed) ? [] : ownMedItemsOf_(r.OwnMedJSON).map(function (l) { return { name: l.name, qty: l.qtyIn, note: (l.other ? 'ยาอื่นๆ · ' : '') + keepNote(l, l.qtyIn, 'return') }; }) },
     { title: 'ซื้อยาเพิ่ม', rows: !isTrue_(r.UseMedicine) ? [] : parseLineItems_(r.MedicineJSON).map(function (l) {
-      return 'qtyDispensed' in l ? { name: withLoc(l), qty: l.qtyDispensed, note: (l.other ? 'ยาอื่นๆ · ' : '') + keepNote(l, l.qtyDispensed) } : { name: l.name || 'ยา', qty: '', note: '' };
+      return 'qtyDispensed' in l ? { name: withLoc(l), qty: l.qtyDispensed, note: (l.other ? 'ยาอื่นๆ · ' : '') + (l.unitMode === 'big' ? 'ซื้อ ' + l.qtyBig + ' ' + (l.bigUnit || 'หน่วยใหญ่') + ' · ' : '') + keepNote(l, l.qtyDispensed) } : { name: l.name || 'ยา', qty: '', note: '' };
     }) },
     { title: 'จัดยารอส่ง', rows: !isTrue_(r.UseShip) ? [] : shipItemsOf_(r.ShipJSON).map(function (l) { return { name: withLoc(l), qty: l.qtyIn, note: keepNote(l, l.qtyIn, 'return') + ' · ตัดสต๊อกแล้ว · รอคิดเงินเซลล์' }; }) },
     { title: 'พัสดุ/messenger เข้าคลินิก', rows: !isTrue_(r.UseMsgIn) ? [] : parseLineItems_(r.MsgInJSON).map(function (l) {
-      return { name: l.other ? l.name : withLoc(l), qty: l.qtyIn, note: keepNote(l, l.qtyIn, 'return') };
+      return { name: l.name, qty: l.qtyIn, note: (l.other ? 'ยาอื่นๆ · ' : '') + keepNote(l, l.qtyIn, 'return') }; // no Stock: plain name, like ยาถือเข้า
     }) },
     { title: 'พัสดุ (ส่ง Messenger)', rows: !isTrue_(r.UseMessenger) ? [] : parseLineItems_(r.MessengerJSON).map(function (l) { return { name: withLoc(l), qty: l.qty, note: l.note || '' }; }) }
   ].filter(function (g) { return g.always || g.rows.length; });
@@ -4575,6 +4684,7 @@ function payRecord(token, rid, payload) {
       var sheet = getSheet_(CONFIG.SHEETS.RECORDS);
       var record = getRows_(sheet).filter(function (r) { return r.RID === rid; })[0];
       if (!record) throw ValidationError_('ไม่พบข้อมูลการรักษา');
+      if (status === 'paid' && visitStatusOf_(record) === 'awaiting_patient') throw ValidationError_('รายการนี้รออัพเดทข้อมูลคนไข้ — เพิ่มข้อมูลคนไข้ก่อนชำระเงิน');
       var oldStatus = record.Status || 'unpaid';
       var updated = Object.assign({}, record, { Status: status, PaymentMethod: payload.paymentMethod || record.PaymentMethod || '', UpdatedAt: nowStr_() });
       if (payload.paymentNote !== undefined) updated.PaymentNote = String(payload.paymentNote || '').trim().slice(0, 500);
@@ -4801,7 +4911,9 @@ function assignRecordPatient(token, rid, patientId) {
       var patient = getRows_(getSheet_(CONFIG.SHEETS.PATIENTS)).filter(function (p) { return p.ID === patientId; })[0];
       if (!patient) throw ValidationError_('ไม่พบข้อมูลคนไข้ที่เลือก');
       var name = patient.FirstName + ' ' + patient.LastName;
-      updateRowByIndex_(sheet, CONFIG.HEADERS.Records, row._row, Object.assign({}, row, { PatientID: patient.ID, PatientName: name, Phone: patient.Phone, UpdatedAt: nowStr_() }));
+      // รออัพเดทข้อมูลคนไข้ → รอดำเนินการ: with the profile it goes on the board (a จัดยาแล้ว record keeps its step).
+      var visit = visitStatusOf_(row) === 'awaiting_patient' ? { VisitStatus: 'pending' } : {};
+      updateRowByIndex_(sheet, CONFIG.HEADERS.Records, row._row, Object.assign({}, row, { PatientID: patient.ID, PatientName: name, Phone: patient.Phone, UpdatedAt: nowStr_() }, visit));
       var wdSheet = getSheet_(CONFIG.SHEETS.MED_WITHDRAWALS);
       getRows_(wdSheet).filter(function (w) { return w.RecordID === rid; }).forEach(function (w) {
         updateRowByIndex_(wdSheet, CONFIG.HEADERS.MedWithdrawals, w._row, Object.assign({}, w, { PatientID: patient.ID, PatientName: name, Phone: patient.Phone }));
@@ -4885,7 +4997,7 @@ function getQueueBoard(token, date) {
     getRows_(getSheet_(CONFIG.SHEETS.RECORDS)).forEach(function (r) {
       if (r.Status === 'cancelled') return;
       var st = visitStatusOf_(r), d = dateStr_(r.QueueDate || r.Date), carry = false;
-      if (st === 'dispensed') return; // not on the board until it becomes รอดำเนินการ
+      if (st === 'dispensed' || st === 'awaiting_patient') return; // not on the board until it becomes รอดำเนินการ
       if (st !== 'pending' && d !== day) {
         if (st !== 'completed' && day === today && d < today) carry = true; else return;
       }
@@ -5088,7 +5200,7 @@ function receiptLines_(r) {
   if (procs.length) procs.forEach(function (p) { out.push({ name: p.name + (p.detail ? ' (' + p.detail + ')' : ''), amount: Number(p.amount) || 0 }); });
   else if (Number(r.Amount)) out.push({ name: r.Detail ? 'หัตถการ (' + r.Detail + ')' : 'หัตถการ', amount: Number(r.Amount) || 0 });
   parseLineItems_(r.PromoJSON).forEach(function (p) { out.push({ name: 'โปร ' + p.name, amount: Number(p.amount) || 0 }); });
-  parseLineItems_(r.MedicineJSON).forEach(function (m) { if (Number(m.amount) > 0) out.push({ name: (m.name || 'ยา') + (m.qtyDispensed ? ' ×' + m.qtyDispensed : ''), amount: Number(m.amount) || 0 }); });
+  parseLineItems_(r.MedicineJSON).forEach(function (m) { if (Number(m.amount) > 0) out.push({ name: (m.name || 'ยา') + (m.unitMode === 'big' ? ' ×' + m.qtyBig + ' ' + (m.bigUnit || '') : (m.qtyDispensed ? ' ×' + m.qtyDispensed : '')), amount: Number(m.amount) || 0 }); });
   canulaItemsOf_(r).forEach(function (c) { if (Number(c.amount)) out.push({ name: 'Canula (เข็มทู่)' + (Number(c.qty) !== 1 ? ' ×' + c.qty : '') + (c.name ? ' · ' + c.name : ''), amount: Number(c.amount) || 0 }); });
   var others = parseLineItems_(r.OtherItemsJSON);
   if (others.length) others.forEach(function (o) { out.push({ name: o.label || 'อื่นๆ', amount: Number(o.amount) || 0 }); });
